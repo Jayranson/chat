@@ -1,0 +1,14 @@
+{% extends "base.html" %}
+{% block title %}Welcome - Chat Network{% endblock %}
+{% block content %}
+<section class="hero">
+    <h2>Welcome to the Chat Network</h2>
+    <p>A modern take on the classic MSN chat rooms. Connect with friends, share images, and relive the nostalgia.</p>
+    {% if user %}
+    <a href="/rooms" class="btn">Enter Chat Rooms</a>
+    {% else %}
+    <a href="/register" class="btn">Get Started</a>
+    <a href="/login" class="btn btn-secondary">Login</a>
+    {% endif %}
+</section>
+{% endblock %}

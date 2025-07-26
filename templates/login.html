@@ -1,0 +1,27 @@
+{% extends "base.html" %}
+{% block title %}Login - Chat Network{% endblock %}
+{% block content %}
+<h2>Login</h2>
+{% if error %}
+<div class="alert">{{ error }}</div>
+{% endif %}
+<form method="post" action="/login" class="form">
+    <div class="form-group">
+        <label for="email">Email</label>
+        <input type="email" id="email" name="email" required>
+    </div>
+    <div class="form-group">
+        <label for="password">Password</label>
+        <input type="password" id="password" name="password" required>
+    </div>
+    <button type="submit" class="btn">Login</button>
+</form>
+<div class="divider">or</div>
+<div class="oauth-buttons">
+    <!-- Placeholder buttons for Google and Apple login. In production these
+         should link to proper OAuth flows configured with client IDs. -->
+    <button class="btn btn-google" onclick="alert('Google login not configured.');">Login with Google</button>
+    <button class="btn btn-apple" onclick="alert('Apple login not configured.');">Login with Apple</button>
+</div>
+<p>Don't have an account? <a href="/register">Register</a></p>
+{% endblock %}

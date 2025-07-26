@@ -1,0 +1,37 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>{% block title %}Chat Network{% endblock %}</title>
+    <link rel="stylesheet" href="/static/style.css">
+    <!-- Optionally load Google Fonts for nicer typography -->
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;700&display=swap" rel="stylesheet">
+    <script defer src="/static/chat.js"></script>
+</head>
+<body>
+    <header class="site-header">
+        <div class="container flex-between">
+            <h1 class="logo"><a href="/">Chat Network</a></h1>
+            <nav>
+                {% if user %}
+                <span class="greeting">Hi, {{ user.username }}</span>
+                <a href="/rooms">Rooms</a>
+                <a href="/logout">Logout</a>
+                {% else %}
+                <a href="/login">Login</a>
+                <a href="/register">Register</a>
+                {% endif %}
+            </nav>
+        </div>
+    </header>
+    <main class="container">
+        {% block content %}{% endblock %}
+    </main>
+    <footer class="site-footer">
+        <div class="container">
+            <p>&copy; {{ datetime.utcnow().year }} Chat Network. All rights reserved.</p>
+        </div>
+    </footer>
+</body>
+</html>

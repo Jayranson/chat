@@ -1,0 +1,35 @@
+{% extends "base.html" %}
+{% block title %}Room: {{ room.name }} - Chat Network{% endblock %}
+{% block content %}
+<div id="room-container" data-room-id="{{ room.id }}" data-user-id="{{ user.id }}" data-role="{{ role }}">
+    <h2>{{ room.name }}</h2>
+    <p>{{ room.description }}</p>
+    <div class="chat-layout">
+        <div class="chat-messages" id="chat-messages">
+            <!-- Messages will appear here -->
+        </div>
+        <div class="chat-users" id="chat-users">
+            <h4>Users</h4>
+            <ul id="user-list">
+                <!-- Populated dynamically -->
+            </ul>
+        </div>
+    </div>
+    <div class="chat-input">
+        <form id="message-form" onsubmit="return sendMessage(event);">
+            <input type="text" id="message-input" placeholder="Type your message..." autocomplete="off" required>
+            <input type="file" id="image-input" accept="image/*" style="display:none" onchange="uploadImage(this)">
+            <button type="button" class="btn btn-image" onclick="document.getElementById('image-input').click();">📷</button>
+            <button type="submit" class="btn">Send</button>
+        </form>
+    </div>
+    <!-- Context menu for user actions -->
+    <ul id="context-menu" class="context-menu"></ul>
+</div>
+<script>
+    // Connect to WebSocket when page loads
+    document.addEventListener('DOMContentLoaded', () => {
+        initChat();
+    });
+</script>
+{% endblock %}

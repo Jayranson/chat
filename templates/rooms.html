@@ -1,0 +1,28 @@
+{% extends "base.html" %}
+{% block title %}Chat Rooms - Chat Network{% endblock %}
+{% block content %}
+<h2>Chat Rooms</h2>
+<section class="create-room">
+    <h3>Create a new room</h3>
+    <form method="post" action="/rooms/create" class="form inline-form">
+        <input type="text" name="name" placeholder="Room name" required>
+        <input type="text" name="description" placeholder="Description (optional)">
+        <button type="submit" class="btn">Create</button>
+    </form>
+</section>
+<section class="room-list">
+    <h3>Available Rooms</h3>
+    {% if rooms %}
+    <ul class="room-ul">
+        {% for room in rooms %}
+        <li>
+            <a href="/rooms/{{ room.id }}" class="room-name">{{ room.name }}</a>
+            <span class="room-owner">Owner: {{ room.owner_username }}</span>
+        </li>
+        {% endfor %}
+    </ul>
+    {% else %}
+    <p>No rooms available. Create one above!</p>
+    {% endif %}
+</section>
+{% endblock %}

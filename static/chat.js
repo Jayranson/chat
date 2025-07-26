@@ -10,7 +10,7 @@ function initChat() {
   const roomId = container.dataset.roomId;
   currentUserId = parseInt(container.dataset.userId, 10);
   currentUserRole = container.dataset.role;
-  const wsUrl = `${location.protocol === 'https:' ? 'wss' : 'ws'}://${location.host}/ws/${roomId}`?user_id=${currentUserId};
+  const wsUrl = `${location.protocol === 'https:' ? 'wss' : 'ws'}://${location.host}/ws/${roomId}?user_id=${currentUserId}`;
   socket = new WebSocket(wsUrl);
 
   socket.addEventListener('open', () => {

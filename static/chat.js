@@ -1,4 +1,4 @@
-// Client‑side script for chat functionality
+// Client-side chat script
 
 let socket;
 let currentUserId;
@@ -7,15 +7,19 @@ let currentUserRole;
 function initChat() {
   const container = document.getElementById('room-container');
   if (!container) return;
-  const roomId = container.dataset.roomId;
+
   currentUserId = parseInt(container.dataset.userId, 10);
   currentUserRole = container.dataset.role;
-  const wsUrl = `${location.protocol === 'https:' ? 'wss' : 'ws'}://${location.host}/ws/${roomId}?user_id=${currentUserId}`;
+  const roomId = container.dataset.roomId;
+
+  const protocol = location.protocol === 'https:' ? 'wss' : 'ws';
+  const wsUrl = `${protocol}://${location.host}/ws/${roomId}?user_id=${currentUserId}`;
+
+  console.log('Connecting to:', wsUrl);
+
   socket = new WebSocket(wsUrl);
 
-  socket.addEventListener('open', () => {
-    console.log('Connected to WebSocket');
-  });
+  socket.addEventListener('open', () => console.log('WebSocket connection established'));
 
   socket.addEventListener('message', (event) => {
     const data = JSON.parse(event.data);
@@ -30,11 +34,11 @@ function initChat() {
     }
   });
 
-  // Hide context menu on global click
-  document.addEventListener('click', () => {
-    hideContextMenu();
-.  });
+  socket.addEventListener('error', (event) => {
+    console.error('WebSocket error:', event);
+  });
 
+  document.addEventListener('click', hideContextMenu);
 }
 
 function handleSocketMessage(data) {
@@ -51,7 +55,7 @@ function handleSocketMessage(data) {
       addImageMessage(data);
       break;
     case 'kicked':
-      alert(`You have been kicked from the room. ${data.reason || ''}`);
+      alert(`You have been kicked. ${data.reason || ''}`);
       window.location.href = '/rooms';
       break;
     case 'warn':
@@ -61,70 +65,74 @@ function handleSocketMessage(data) {
       alert(data.message);
       break;
     default:
-      console.log('Unhandled message', data);
+      console.warn('Unhandled socket message:', data);
   }
 }
 
 function addChatMessage({ username, message, timestamp }) {
-  const messages = document.getElementById('chat-messages');
-  const msgDiv = document.createElement('div');
-  msgDiv.classList.add('message');
-  const senderSpan = document.createElement('span');
-  senderSpan.classList.add('sender');
-  senderSpan.textContent = username;
-  const textSpan = document.createElement('span');
-  textSpan.classList.add('text');
-  textSpan.textContent = `: ${message}`;
-  const timeSpan = document.createElement('span');
-  timeSpan.classList.add('timestamp');
-  timeSpan.textContent = formatTimestamp(timestamp);
-  msgDiv.appendChild(senderSpan);
-  msgDiv.appendChild(textSpan);
-  msgDiv.appendChild(timeSpan);
-  messages.appendChild(msgDiv);
-  messages.scrollTop = messages.scrollHeight;
+  const container = document.getElementById('chat-messages');
+  const msg = document.createElement('div');
+  msg.className = 'message';
+
+  const sender = document.createElement('span');
+  sender.className = 'sender';
+  sender.textContent = username;
+
+  const text = document.createElement('span');
+  text.className = 'text';
+  text.textContent = `: ${message}`;
+
+  const time = document.createElement('span');
+  time.className = 'timestamp';
+  time.textContent = formatTimestamp(timestamp);
+
+  msg.append(sender, text, time);
+  container.appendChild(msg);
+  container.scrollTop = container.scrollHeight;
 }
 
 function addImageMessage({ username, url, timestamp }) {
-  const messages = document.getElementById('chat-messages');
-  const msgDiv = document.createElement('div');
-  msgDiv.classList.add('message');
-  const senderSpan = document.createElement('span');
-  senderSpan.classList.add('sender');
-  senderSpan.textContent = username;
-  const textSpan = document.createElement('span');
-  textSpan.classList.add('text');
-  textSpan.textContent = ' sent an image:';
-  const timeSpan = document.createElement('span');
-  timeSpan.classList.add('timestamp');
-  timeSpan.textContent = formatTimestamp(timestamp);
-  const img = document.createElement('img');
-  img.src = url;
-  img.onload = () => {
-    messages.scrollTop = messages.scrollHeight;
+  const container = document.getElementById('chat-messages');
+  const msg = document.createElement('div');
+  msg.className = 'message';
+
+  const sender = document.createElement('span');
+  sender.className = 'sender';
+  sender.textContent = username;
+
+  const text = document.createElement('span');
+  text.className = 'text';
+  text.textContent = ' sent an image:';
+
+  const time = document.createElement('span');
+  time.className = 'timestamp';
+  time.textContent = formatTimestamp(timestamp);
+
+  const image = document.createElement('img');
+  image.src = url;
+  image.onload = () => {
+    container.scrollTop = container.scrollHeight;
   };
-  msgDiv.appendChild(senderSpan);
-  msgDiv.appendChild(textSpan);
-  msgDiv.appendChild(timeSpan);
-  msgDiv.appendChild(document.createElement('br'));
-  msgDiv.appendChild(img);
-  messages.appendChild(msgDiv);
-  messages.scrollTop = messages.scrollHeight;
+
+  msg.append(sender, text, time, document.createElement('br'), image);
+  container.appendChild(msg);
+  container.scrollTop = container.scrollHeight;
 }
 
 function updateUserList(users) {
   const list = document.getElementById('user-list');
   list.innerHTML = '';
-  users.forEach(u => {
+  users.forEach(user => {
     const li = document.createElement('li');
-    li.textContent = `${u.username}` + (u.role !== 'user' ? ` [${u.role}]` : '');
-    li.dataset.userId = u.user_id;
-    li.dataset.role = u.role;
-    // Right click handler
+    li.textContent = `${user.username}${user.role !== 'user' ? ` [${user.role}]` : ''}`;
+    li.dataset.userId = user.user_id;
+    li.dataset.role = user.role;
+
     li.addEventListener('contextmenu', (e) => {
       e.preventDefault();
-      showContextMenu(e.clientX, e.clientY, u);
+      showContextMenu(e.clientX, e.clientY, user);
     });
+
     list.appendChild(li);
   });
 }
@@ -134,6 +142,7 @@ function sendMessage(event) {
   const input = document.getElementById('message-input');
   const message = input.value.trim();
   if (!message) return false;
+
   if (socket && socket.readyState === WebSocket.OPEN) {
     socket.send(JSON.stringify({ type: 'chat_message', message }));
   }
@@ -144,52 +153,47 @@ function sendMessage(event) {
 function uploadImage(input) {
   const file = input.files[0];
   if (!file) return;
+
   const formData = new FormData();
   formData.append('file', file);
-  fetch('/upload', {
-    method: 'POST',
-    body: formData
-  }).then(res => {
-    if (!res.ok) throw new Error('Upload failed');
-    return res.text();
-  }).then(url => {
-    if (socket && socket.readyState === WebSocket.OPEN) {
-      socket.send(JSON.stringify({ type: 'image_message', url }));
-    }
-  }).catch(err => {
-    alert('Failed to upload image: ' + err.message);
-  }).finally(() => {
-    input.value = '';
-  });
+
+  fetch('/upload', { method: 'POST', body: formData })
+    .then(res => res.ok ? res.text() : Promise.reject('Upload failed'))
+    .then(url => {
+      if (socket && socket.readyState === WebSocket.OPEN) {
+        socket.send(JSON.stringify({ type: 'image_message', url }));
+      }
+    })
+    .catch(err => alert(`Image upload failed: ${err}`))
+    .finally(() => input.value = '');
 }
 
-function showContextMenu(x, y, targetUser) {
-  // Hide if clicking on yourself
-  if (targetUser.user_id === currentUserId) return;
+function showContextMenu(x, y, user) {
+  if (user.user_id === currentUserId) return;
+
   const menu = document.getElementById('context-menu');
   menu.innerHTML = '';
   menu.style.display = 'block';
-  menu.style.top = y + 'px';
-  menu.style.left = x + 'px';
-  // Determine actions based on role
+  menu.style.top = `${y}px`;
+  menu.style.left = `${x}px`;
+
   const actions = [];
-  // Everyone with moderation privileges can warn or kick
   if (['sysop', 'owner', 'host'].includes(currentUserRole)) {
     actions.push({ label: 'Kick', command: 'kick' });
     actions.push({ label: 'Warn', command: 'warn' });
   }
-  // Only owners and sysops can assign hosts/owners
   if (['sysop', 'owner'].includes(currentUserRole)) {
     actions.push({ label: 'Make Host', command: 'assign_host' });
     actions.push({ label: 'Make Owner', command: 'assign_owner' });
   }
-  actions.forEach(act => {
+
+  actions.forEach(({ label, command }) => {
     const li = document.createElement('li');
-    li.textContent = act.label;
+    li.textContent = label;
     li.addEventListener('click', () => {
       hideContextMenu();
-      const reason = act.command === 'kick' || act.command === 'warn' ? prompt('Reason (optional):', '') : '';
-      sendCommand(act.command, targetUser.user_id, reason);
+      const reason = ['kick', 'warn'].includes(command) ? prompt('Reason (optional):') : '';
+      sendCommand(command, user.user_id, reason);
     });
     menu.appendChild(li);
   });
@@ -197,9 +201,7 @@ function showContextMenu(x, y, targetUser) {
 
 function hideContextMenu() {
   const menu = document.getElementById('context-menu');
-  if (menu) {
-    menu.style.display = 'none';
-  }
+  if (menu) menu.style.display = 'none';
 }
 
 function sendCommand(command, targetId, reason) {
@@ -209,11 +211,10 @@ function sendCommand(command, targetId, reason) {
 }
 
 function formatTimestamp(ts) {
-  // Format ISO timestamp into HH:MM
   try {
     const date = new Date(ts);
-    return `(${date.getHours().toString().padStart(2,'0')}:${date.getMinutes().toString().padStart(2,'0')})`;
-  } catch (e) {
+    return `(${date.getHours().toString().padStart(2, '0')}:${date.getMinutes().toString().padStart(2, '0')})`;
+  } catch {
     return '';
   }
 }

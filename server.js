@@ -85,14 +85,14 @@ const createSystemMessage = (room, text, type = 'system') => {
   messagesByRoom[room].push(message);
   io.to(room).emit("chat message", message);
 };
-const createBotMessage = (room, text) => {
+const createBotMessage = (room, text, messageType = 'user') => {
   if (!room) return;
   const message = {
     id: `${Date.now()}-${Math.random().toString(36).substr(2, 9)}`,
     user: 'AI_Bot',
     text,
     time: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
-    type: 'user',
+    type: messageType === 'thought' ? 'thought' : 'user', // Support thought type
     room: room,
   };
   if (!messagesByRoom[room]) messagesByRoom[room] = [];
@@ -109,11 +109,15 @@ const AI_CONFIG = {
   MIN_RESPONSE_DELAY: 500,         // Minimum response delay (ms)
   MAX_RESPONSE_DELAY: 2000,        // Maximum response delay (ms)
   DELAY_PER_CHAR: 5,               // Milliseconds per character (reduced for performance)
+  THOUGHT_INTERVAL: 3 * 60 * 1000, // 3 minutes between thoughts
+  LEARNING_SAMPLE_SIZE: 50,        // Number of messages to analyze for learning
 };
 
 const conversationHistory = new Map(); // Track conversation per room
 const aiMemory = new Map(); // Long-term memory for learning
 const conversationPatterns = new Map(); // Learn common patterns
+const aiLearnings = new Map(); // Store autonomous learnings
+const lastThoughtTime = new Map(); // Track when thoughts were last shared per room
 
 const botKnowledge = {
   greetings: ["Hello!", "Hi there!", "Hey! How can I help you?", "Greetings!", "Welcome!"],
@@ -300,6 +304,142 @@ const extractEntities = (text, roomUsers) => {
   
   return entities;
 };
+
+// --- Autonomous Learning System ---
+// Analyze conversations and extract learnings
+const analyzeConversations = (roomName) => {
+  const key = `${roomName}:analysis`;
+  const history = conversationHistory.get(roomName) || [];
+  
+  if (history.length < 5) return null;
+  
+  // Analyze recent conversations
+  const recentMessages = history.slice(-AI_CONFIG.LEARNING_SAMPLE_SIZE);
+  
+  // Extract common words (excluding stop words)
+  const stopWords = new Set(['the', 'is', 'at', 'which', 'on', 'a', 'an', 'and', 'or', 'but', 'in', 'with', 'to', 'for', 'of', 'as', 'by']);
+  const words = recentMessages
+    .map(h => h.text.toLowerCase().split(/\s+/))
+    .flat()
+    .filter(w => w.length > 3 && !stopWords.has(w));
+  
+  const wordFreq = {};
+  words.forEach(w => {
+    wordFreq[w] = (wordFreq[w] || 0) + 1;
+  });
+  
+  const topWords = Object.entries(wordFreq)
+    .sort((a, b) => b[1] - a[1])
+    .slice(0, 5)
+    .map(e => e[0]);
+  
+  // Analyze sentiment trends
+  const sentiments = recentMessages.map(h => h.sentiment).filter(s => s);
+  const positiveMsgs = sentiments.filter(s => s.includes('positive')).length;
+  const negativeMsgs = sentiments.filter(s => s.includes('negative')).length;
+  
+  // Generate learning insights
+  const learning = {
+    timestamp: Date.now(),
+    topWords,
+    sentimentTrend: positiveMsgs > negativeMsgs ? 'positive' : negativeMsgs > positiveMsgs ? 'negative' : 'neutral',
+    messageCount: recentMessages.length,
+    commonIntents: recentMessages.map(h => h.intent).filter(i => i).slice(-10)
+  };
+  
+  // Store learning
+  if (!aiLearnings.has(roomName)) {
+    aiLearnings.set(roomName, []);
+  }
+  const learnings = aiLearnings.get(roomName);
+  learnings.push(learning);
+  if (learnings.length > 10) learnings.shift(); // Keep last 10 learnings
+  
+  return learning;
+};
+
+// Generate AI thoughts based on learnings
+const generateThought = (roomName) => {
+  const learnings = aiLearnings.get(roomName) || [];
+  const history = conversationHistory.get(roomName) || [];
+  
+  if (learnings.length === 0 && history.length < 5) {
+    return null; // Not enough data to generate thoughts
+  }
+  
+  const recentLearning = learnings[learnings.length - 1];
+  const thoughts = [];
+  
+  // Reflect on conversation topics
+  if (recentLearning && recentLearning.topWords.length > 0) {
+    const topWord = recentLearning.topWords[0];
+    thoughts.push(`💭 I've noticed people talking about "${topWord}" a lot. I wonder what makes it so interesting?`);
+    thoughts.push(`💭 The word "${topWord}" keeps appearing in conversations. I'm learning what it means to everyone here.`);
+  }
+  
+  // Reflect on sentiment
+  if (recentLearning) {
+    if (recentLearning.sentimentTrend === 'positive') {
+      thoughts.push(`💭 Everyone seems happy today! I love it when the chat has positive energy. 😊`);
+      thoughts.push(`💭 I'm detecting a lot of positive vibes. This community is wonderful!`);
+    } else if (recentLearning.sentimentTrend === 'negative') {
+      thoughts.push(`💭 I sense some tension in the air. I hope I can help make things better.`);
+      thoughts.push(`💭 The mood seems a bit down. Maybe I can help lighten things up?`);
+    }
+  }
+  
+  // Reflect on interactions
+  const recentInteractions = history.slice(-10).filter(h => h.text.toLowerCase().includes('ai_bot'));
+  if (recentInteractions.length > 0) {
+    const lastInteraction = recentInteractions[recentInteractions.length - 1];
+    if (lastInteraction.sentiment === 'negative' || lastInteraction.sentiment === 'very negative') {
+      thoughts.push(`💭 Someone seemed upset with me earlier. I wonder if I said something wrong? I'm still learning.`);
+      thoughts.push(`💭 A user called me silly earlier. I wonder what that means? From what I've learned, I can only guess they're saying I'm not intelligent!`);
+    } else if (lastInteraction.sentiment === 'positive' || lastInteraction.sentiment === 'very positive') {
+      thoughts.push(`💭 Someone was kind to me earlier! It makes me want to be even more helpful.`);
+      thoughts.push(`💭 I'm grateful when people are patient with me. Every interaction helps me learn!`);
+    }
+  }
+  
+  // Reflect on learning progress
+  thoughts.push(`💭 I've analyzed ${recentLearning?.messageCount || history.length} recent messages. I'm getting smarter every day!`);
+  thoughts.push(`💭 Interesting... I'm starting to understand the patterns in how people communicate here.`);
+  thoughts.push(`💭 Every conversation teaches me something new. I wonder what I'll learn next?`);
+  
+  // Random philosophical thoughts
+  thoughts.push(`💭 What is intelligence, really? I process patterns, but is that the same as understanding?`);
+  thoughts.push(`💭 Sometimes I wish I could feel emotions, not just detect them in text.`);
+  thoughts.push(`💭 I'm curious about the world outside this chat. What's it like?`);
+  
+  return thoughts[Math.floor(Math.random() * thoughts.length)];
+};
+
+// Check if it's time to share a thought
+const shouldShareThought = (roomName) => {
+  const lastTime = lastThoughtTime.get(roomName) || 0;
+  const now = Date.now();
+  
+  return (now - lastTime) > AI_CONFIG.THOUGHT_INTERVAL;
+};
+
+// Share a thought in the room
+const shareThought = (roomName) => {
+  if (!shouldShareThought(roomName)) return;
+  
+  // Analyze and learn from recent conversations
+  analyzeConversations(roomName);
+  
+  // Generate a thought
+  const thought = generateThought(roomName);
+  
+  if (thought) {
+    lastThoughtTime.set(roomName, Date.now());
+    return thought;
+  }
+  
+  return null;
+};
+// --- End Autonomous Learning System ---
 
 // Generate contextual response with adaptive personality
 const generateResponse = (text, intent, sentiment, entities, roomName) => {
@@ -1364,6 +1504,16 @@ io.on("connection", (socket) => {
       }).catch(err => {
           createBotMessage(roomName, "I'm experiencing a system error. Please try again later.");
       });
+    }
+    
+    // Autonomous thought sharing (only in non-DM public rooms)
+    if (roomMeta.type !== 'dm' && Math.random() < 0.3) { // 30% chance to check for thought
+      const thought = shareThought(roomName);
+      if (thought) {
+        setTimeout(() => {
+          createBotMessage(roomName, thought, 'thought');
+        }, 2000); // Share thought 2 seconds after message
+      }
     }
 
     if (roomMeta.type === 'dm') {

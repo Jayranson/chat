@@ -4,7 +4,7 @@ import { io, Socket } from "socket.io-client";
 // --- Type Definitions ---
 type Message = {
   id: string; user: string; text: string; time: string;
-  type: 'user' | 'system' | 'server'; room: string;
+  type: 'user' | 'system' | 'server' | 'thought'; room: string;
   deleted?: boolean; edited?: boolean;
 };
 
@@ -1518,7 +1518,17 @@ function ChatApp({ socket, initialUser, initialRoom, onExit, onViewProfile, onWh
       className={`bg-neutral-900 text-white h-full flex flex-col font-sans overflow-hidden ${isSummoned ? 'border-4 border-red-500' : ''}`}
       onClick={(e) => { closeContextMenu(); setShowEmojiPicker(false); }}
     >
-      <style>{`.no-scrollbar::-webkit-scrollbar { display: none; } .no-scrollbar { -ms-overflow-style: none; scrollbar-width: none; }`}</style>
+      <style>{`
+        .no-scrollbar::-webkit-scrollbar { display: none; } 
+        .no-scrollbar { -ms-overflow-style: none; scrollbar-width: none; }
+        @keyframes fadeIn {
+          from { opacity: 0; transform: translateY(10px); }
+          to { opacity: 1; transform: translateY(0); }
+        }
+        .animate-fadeIn {
+          animation: fadeIn 0.5s ease-out;
+        }
+      `}</style>
       {/* MODIFIED: ReportModal is now for confirmation */}
       {reportData && (<ReportModal alert={reportData} onClose={() => setReportData(null)} />)}
       {/* NEW: ReportUserModal */}
@@ -1610,6 +1620,24 @@ function ChatApp({ socket, initialUser, initialRoom, onExit, onViewProfile, onWh
                     <span className="text-neutral-600 mr-2">[{msg.time}]</span> {msg.type === 'server' && 'SERVER: '}{msg.text}
                   </div>
               )}
+              
+              // AI Thought bubble - special styling
+              if (msg.type === 'thought') { return (
+                  <div key={msg.id} className="flex justify-center my-3">
+                    <div className="max-w-lg bg-gradient-to-r from-purple-900/30 to-blue-900/30 border-2 border-purple-500/50 rounded-2xl px-4 py-3 shadow-lg animate-fadeIn relative">
+                      <div className="absolute -top-2 -left-2 w-4 h-4 bg-purple-500/50 rounded-full"></div>
+                      <div className="absolute -top-1 -left-4 w-3 h-3 bg-purple-500/30 rounded-full"></div>
+                      <div className="flex items-start gap-2">
+                        <span className="text-purple-300 text-sm font-semibold flex items-center gap-1">
+                          <IconBot /> AI_Bot
+                        </span>
+                      </div>
+                      <p className="text-purple-100 italic text-sm mt-1">{msg.text}</p>
+                      <span className="text-purple-400/60 text-xs mt-1 block">{msg.time}</span>
+                    </div>
+                  </div>
+              )}
+              
               const isSelf = msg.user === currentUser?.username && !msg.deleted; 
               const userDetails = usersWithDetails[msg.user];
               const isLastMessage = index === messages.length - 1; const isAdmin = currentUserRole === 'admin';

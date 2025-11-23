@@ -100,6 +100,17 @@ const createBotMessage = (room, text) => {
   io.to(room).emit("chat message", message);
 };
 // --- Enhanced AI System ---
+// Configuration Constants
+const AI_CONFIG = {
+  CONVERSATION_HISTORY_LIMIT: 10,  // Max conversation history per room
+  FAQ_HISTORY_LIMIT: 20,           // Max FAQ entries per room
+  BEHAVIOR_DECAY_TIME: 5 * 60 * 1000, // 5 minutes in milliseconds
+  DECAY_CHECK_INTERVAL: 60000,     // 1 minute in milliseconds
+  MIN_RESPONSE_DELAY: 500,         // Minimum response delay (ms)
+  MAX_RESPONSE_DELAY: 2000,        // Maximum response delay (ms)
+  DELAY_PER_CHAR: 5,               // Milliseconds per character (reduced for performance)
+};
+
 const conversationHistory = new Map(); // Track conversation per room
 const userSentiment = new Map(); // Track user sentiment
 const aiMemory = new Map(); // Long-term memory for learning
@@ -227,7 +238,7 @@ const learnFromInteraction = (text, intent, sentiment, roomName) => {
     }
     const faq = aiMemory.get(memKey);
     faq.push({ question: text, timestamp: Date.now() });
-    if (faq.length > 20) faq.shift(); // Keep last 20
+    if (faq.length > AI_CONFIG.FAQ_HISTORY_LIMIT) faq.shift();
   }
 };
 
@@ -387,7 +398,7 @@ const generateResponse = (text, intent, sentiment, entities, roomName) => {
   
   // Add to conversation history
   history.push({ text, intent, sentiment, timestamp: Date.now() });
-  if (history.length > 10) history.shift(); // Keep last 10 interactions
+  if (history.length > AI_CONFIG.CONVERSATION_HISTORY_LIMIT) history.shift();
   
   return responses.length > 0 ? responses.join(' ') : getDefaultResponse(sentiment, personality);
 };
@@ -560,23 +571,6 @@ const handleOpinion = (text, entities, sentiment, personality) => {
   
   return responses;
 };
-  
-  // Explain something
-  else if (/explain/.test(lower)) {
-    if (/(how|work|function)/.test(lower)) {
-      responses.push("This chat uses real-time WebSocket connections for instant messaging. I'm an AI moderator that helps keep conversations friendly and answers questions!");
-    } else {
-      responses.push("I'd be happy to explain! What would you like to know more about?");
-    }
-  }
-  
-  // Default
-  else {
-    responses.push("I'll do my best to help with that. Could you provide more details?");
-  }
-  
-  return responses;
-};
 
 // Handle statements with personality
 const handleStatement = (text, entities, sentiment, history, personality) => {
@@ -734,7 +728,10 @@ const getAIResponse = async (inputText, roomName = 'general', roomUsers = []) =>
       const response = generateResponse(inputText, intent, sentiment, entities, roomName);
       
       // Simulate processing time (make it feel natural)
-      const delay = Math.min(500 + response.length * 10, 2000);
+      const delay = Math.min(
+        AI_CONFIG.MIN_RESPONSE_DELAY + response.length * AI_CONFIG.DELAY_PER_CHAR,
+        AI_CONFIG.MAX_RESPONSE_DELAY
+      );
       
       setTimeout(() => {
         resolve(response);
@@ -750,13 +747,15 @@ const getAIResponse = async (inputText, roomName = 'general', roomUsers = []) =>
 
 // --- AI Moderation Features ---
 // Toxicity detection
+// Toxicity detection patterns (obfuscated for code cleanliness)
 const toxicPatterns = {
   severe: [
-    /\b(fuck|shit|damn|hell|ass|bitch|bastard|cunt)\b/i,
-    /\b(idiot|stupid|moron|dumb|retard)\b/i,
+    // Strong offensive language patterns (base64 encoded patterns can be used in production)
+    /\b(f[u*]ck|sh[i*]t|d[a*]mn|h[e*]ll|[a*]ss|b[i*]tch|b[a*]st[a*]rd|c[u*]nt)\b/i,
+    /\b([i*]d[i*]ot|st[u*]p[i*]d|m[o*]r[o*]n|d[u*]mb|r[e*]t[a*]rd)\b/i,
   ],
   moderate: [
-    /\b(shut up|hate you|suck|loser|noob)\b/i,
+    /\b(shut\s+up|hate\s+you|suck|loser|noob)\b/i,
   ],
   spam: [
     /(.)\1{10,}/, // Repeated characters
@@ -849,12 +848,12 @@ setInterval(() => {
   for (const [userId, behavior] of userBehaviorTracking.entries()) {
     const timeSinceLastMessage = Date.now() - behavior.lastMessageTime;
     
-    // Decay after 5 minutes of inactivity
-    if (timeSinceLastMessage > 5 * 60 * 1000) {
+    // Decay after configured inactivity period
+    if (timeSinceLastMessage > AI_CONFIG.BEHAVIOR_DECAY_TIME) {
       trackUserBehavior(userId, { type: 'reset' });
     }
   }
-}, 60000); // Check every minute
+}, AI_CONFIG.DECAY_CHECK_INTERVAL);
 
 // AI suggestion for moderators
 const generateModSuggestion = (behavior, username) => {

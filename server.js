@@ -102,6 +102,9 @@ const createBotMessage = (room, text) => {
 // --- Enhanced AI System ---
 const conversationHistory = new Map(); // Track conversation per room
 const userSentiment = new Map(); // Track user sentiment
+const aiMemory = new Map(); // Long-term memory for learning
+const conversationPatterns = new Map(); // Learn common patterns
+
 const botKnowledge = {
   greetings: ["Hello!", "Hi there!", "Hey! How can I help you?", "Greetings!", "Welcome!"],
   farewells: ["Goodbye!", "See you later!", "Take care!", "Farewell!"],
@@ -116,51 +119,153 @@ const botKnowledge = {
     music: "I love discussing music! What's your favorite genre?",
     help: "I'm here to assist you. What do you need help with?",
     chat: "This is a great place to chat with others!",
-    moderation: "I help keep this chat safe and friendly."
+    moderation: "I help keep this chat safe and friendly.",
+    technology: "Technology is fascinating! What interests you most?",
+    gaming: "Gaming is a popular topic here! What games do you enjoy?",
+    movies: "Movies are great entertainment! Any favorites?",
+    books: "Reading is wonderful! What genres do you prefer?"
+  },
+  facts: [
+    "Did you know? I can understand context and remember our conversations!",
+    "Fun fact: I analyze sentiment to provide better responses.",
+    "Interesting: I learn from patterns in our chats to improve over time.",
+    "Cool feature: I can detect spam and toxicity to keep the chat safe!"
+  ],
+  jokes: [
+    "Why did the AI go to school? To improve its learning algorithms! 😄",
+    "What's an AI's favorite type of music? Algorithm and blues! 🎵",
+    "Why don't AIs ever get tired? They run on renewable enthusiasm! ⚡",
+    "How does an AI stay cool? It uses fan-tastic cooling systems! ❄️"
+  ],
+  personality: {
+    helpfulness: 0.9,  // How eager to help (0-1)
+    humor: 0.6,        // How often to use humor (0-1)
+    formality: 0.4,    // How formal responses are (0-1)
+    verbosity: 0.6     // How detailed responses are (0-1)
   }
 };
 
-// Intent recognition
+// Intent recognition with improved pattern matching
 const recognizeIntent = (text) => {
   const lower = text.toLowerCase();
   
   // Remove bot mention
   const cleanText = lower.replace(/@ai_bot/g, '').trim();
   
-  // Greetings
-  if (/^(hi|hello|hey|greetings|howdy|sup|yo)\b/.test(cleanText)) return 'greeting';
+  // Greetings - more patterns
+  if (/^(hi|hello|hey|greetings|howdy|sup|yo|good\s+(morning|afternoon|evening)|what'?s\s+up)\b/.test(cleanText)) return 'greeting';
   
-  // Farewells
-  if (/^(bye|goodbye|see you|farewell|cya)\b/.test(cleanText)) return 'farewell';
+  // Farewells - more patterns
+  if (/^(bye|goodbye|see\s+you|farewell|cya|later|gotta\s+go|peace|take\s+care)\b/.test(cleanText)) return 'farewell';
   
-  // Questions
-  if (/^(what|who|where|when|why|how|can|could|would|should|is|are|do|does)\b/.test(cleanText)) return 'question';
+  // Questions - enhanced detection
+  if (/^(what|who|where|when|why|how|can|could|would|should|is|are|do|does|did|will|won't|isn't|aren't)\b/.test(cleanText)) return 'question';
   
-  // Commands/Requests
-  if (/^(tell|show|explain|list|give|help)\b/.test(cleanText)) return 'request';
+  // Commands/Requests - more comprehensive
+  if (/^(tell|show|explain|list|give|help|teach|describe|share|provide)\b/.test(cleanText)) return 'request';
   
-  // Thanks
-  if (/(thank|thanks|thx|ty|appreciate)/.test(cleanText)) return 'gratitude';
+  // Thanks - more variations
+  if (/(thank|thanks|thx|ty|appreciate|grateful|kudos)/.test(cleanText)) return 'gratitude';
   
-  // Complaints
-  if (/(spam|annoying|stop|quiet|shut up)/.test(cleanText)) return 'complaint';
+  // Complaints - expanded
+  if (/(spam|annoying|stop|quiet|shut\s+up|leave\s+me|go\s+away)/.test(cleanText)) return 'complaint';
+  
+  // Jokes/Fun
+  if (/(joke|funny|laugh|humor|entertain|amuse)/.test(cleanText)) return 'entertainment';
+  
+  // Information seeking
+  if (/(know|learn|understand|info|information|detail|about)/.test(cleanText)) return 'information';
+  
+  // Opinions/Thoughts
+  if /(think|feel|opinion|thought|believe|seem)/.test(cleanText)) return 'opinion';
   
   return 'statement';
 };
 
-// Sentiment analysis (simple)
+// Enhanced sentiment analysis with more nuanced detection
 const analyzeSentiment = (text) => {
   const lower = text.toLowerCase();
   
-  const positiveWords = /(good|great|awesome|excellent|love|like|happy|thanks|wonderful|amazing|fantastic)/g;
-  const negativeWords = /(bad|hate|terrible|awful|stupid|angry|annoying|worst|horrible|sucks)/g;
+  const positiveWords = /(good|great|awesome|excellent|love|like|happy|thanks|wonderful|amazing|fantastic|perfect|brilliant|nice|cool|best|super|beautiful|delightful|pleased|enjoy|fun)/g;
+  const negativeWords = /(bad|hate|terrible|awful|stupid|angry|annoying|worst|horrible|sucks|ugly|disgusting|disappointed|sad|upset|frustrated|annoyed|boring|lame)/g;
+  const strongPositive = /(love|amazing|fantastic|perfect|brilliant|excellent|wonderful)/g;
+  const strongNegative = /(hate|terrible|awful|worst|horrible|disgusting)/g;
   
   const positiveCount = (lower.match(positiveWords) || []).length;
   const negativeCount = (lower.match(negativeWords) || []).length;
+  const strongPosCount = (lower.match(strongPositive) || []).length;
+  const strongNegCount = (lower.match(strongNegative) || []).length;
   
-  if (positiveCount > negativeCount) return 'positive';
-  if (negativeCount > positiveCount) return 'negative';
+  // Weight strong sentiments more heavily
+  const positiveScore = positiveCount + (strongPosCount * 2);
+  const negativeScore = negativeCount + (strongNegCount * 2);
+  
+  if (positiveScore > negativeScore + 1) return 'very positive';
+  if (positiveScore > negativeScore) return 'positive';
+  if (negativeScore > positiveScore + 1) return 'very negative';
+  if (negativeScore > positiveScore) return 'negative';
   return 'neutral';
+};
+
+// Learn from interactions
+const learnFromInteraction = (text, intent, sentiment, roomName) => {
+  const key = `${roomName}:pattern`;
+  if (!conversationPatterns.has(key)) {
+    conversationPatterns.set(key, {});
+  }
+  
+  const patterns = conversationPatterns.get(key);
+  const patternKey = `${intent}:${sentiment}`;
+  
+  patterns[patternKey] = (patterns[patternKey] || 0) + 1;
+  
+  // Remember frequently asked questions
+  if (intent === 'question') {
+    const memKey = `${roomName}:faq`;
+    if (!aiMemory.has(memKey)) {
+      aiMemory.set(memKey, []);
+    }
+    const faq = aiMemory.get(memKey);
+    faq.push({ question: text, timestamp: Date.now() });
+    if (faq.length > 20) faq.shift(); // Keep last 20
+  }
+};
+
+// Get room personality (adapts to room culture)
+const getRoomPersonality = (roomName) => {
+  const key = `${roomName}:pattern`;
+  if (!conversationPatterns.has(key)) {
+    return { ...botKnowledge.personality };
+  }
+  
+  const patterns = conversationPatterns.get(key);
+  const total = Object.values(patterns).reduce((sum, count) => sum + count, 0);
+  
+  if (total === 0) {
+    return { ...botKnowledge.personality };
+  }
+  
+  // Adapt personality based on room patterns
+  const personality = { ...botKnowledge.personality };
+  
+  // If lots of questions, be more helpful and verbose
+  const questionRatio = (patterns['question:neutral'] || 0) / total;
+  if (questionRatio > 0.3) {
+    personality.helpfulness = Math.min(1, personality.helpfulness + 0.1);
+    personality.verbosity = Math.min(1, personality.verbosity + 0.1);
+  }
+  
+  // If positive sentiment, be more humorous
+  const positiveRatio = (
+    (patterns['statement:positive'] || 0) +
+    (patterns['statement:very positive'] || 0)
+  ) / total;
+  if (positiveRatio > 0.4) {
+    personality.humor = Math.min(1, personality.humor + 0.2);
+    personality.formality = Math.max(0, personality.formality - 0.1);
+  }
+  
+  return personality;
 };
 
 // Entity extraction
@@ -186,7 +291,7 @@ const extractEntities = (text, roomUsers) => {
   return entities;
 };
 
-// Generate contextual response
+// Generate contextual response with adaptive personality
 const generateResponse = (text, intent, sentiment, entities, roomName) => {
   const responses = [];
   
@@ -196,77 +301,137 @@ const generateResponse = (text, intent, sentiment, entities, roomName) => {
   }
   const history = conversationHistory.get(roomName);
   
+  // Get adaptive personality for this room
+  const personality = getRoomPersonality(roomName);
+  
+  // Learn from this interaction
+  learnFromInteraction(text, intent, sentiment, roomName);
+  
   // Handle different intents
   switch (intent) {
     case 'greeting':
-      if (sentiment === 'positive') {
-        responses.push("Hello! I'm delighted to help you today!");
+      if (sentiment === 'very positive') {
+        responses.push("Hello! I'm absolutely delighted to help you today! 😊");
+      } else if (sentiment === 'positive') {
+        responses.push("Hello! I'm happy to help you today!");
       } else {
         const greeting = botKnowledge.greetings[Math.floor(Math.random() * botKnowledge.greetings.length)];
         responses.push(greeting);
+        
+        // Add helpful hint based on personality
+        if (personality.helpfulness > 0.8 && Math.random() < 0.3) {
+          responses.push("Feel free to ask me anything about the chat, rules, or just chat!");
+        }
       }
       break;
       
     case 'farewell':
       const farewell = botKnowledge.farewells[Math.floor(Math.random() * botKnowledge.farewells.length)];
       responses.push(farewell);
+      
+      // Add friendly closing based on sentiment
+      if (sentiment.includes('positive')) {
+        responses.push("It was great chatting with you!");
+      }
       break;
       
     case 'gratitude':
-      responses.push("You're welcome! Happy to help anytime.");
+      const thanksResponses = [
+        "You're welcome! Happy to help anytime.",
+        "My pleasure! That's what I'm here for.",
+        "Glad I could help! 😊",
+        "Anytime! Feel free to ask if you need anything else."
+      ];
+      responses.push(thanksResponses[Math.floor(Math.random() * thanksResponses.length)]);
       break;
       
     case 'complaint':
       if (text.toLowerCase().includes('spam')) {
-        responses.push("I understand your concern. If you see spam, please report it to the admins.");
+        responses.push("I understand your concern about spam. Please report it to the admins and I'll help monitor it.");
+      } else if (text.toLowerCase().includes('annoying')) {
+        responses.push("I apologize if I've been bothersome. I'll give you some space. Just mention me if you need help!");
       } else {
-        responses.push("I apologize if I've been bothering you. I'm here to help when needed!");
+        responses.push("I'm sorry you're feeling this way. How can I make things better?");
       }
       break;
       
+    case 'entertainment':
+      if (text.toLowerCase().includes('joke')) {
+        const joke = botKnowledge.jokes[Math.floor(Math.random() * botKnowledge.jokes.length)];
+        responses.push(joke);
+      } else {
+        const fact = botKnowledge.facts[Math.floor(Math.random() * botKnowledge.facts.length)];
+        responses.push(fact);
+      }
+      break;
+      
+    case 'information':
+      responses.push(...handleInformationRequest(text, entities, history, personality));
+      break;
+      
     case 'question':
-      responses.push(...handleQuestion(text, entities, history));
+      responses.push(...handleQuestion(text, entities, history, personality));
       break;
       
     case 'request':
-      responses.push(...handleRequest(text, entities, history));
+      responses.push(...handleRequest(text, entities, history, personality));
+      break;
+      
+    case 'opinion':
+      responses.push(...handleOpinion(text, entities, sentiment, personality));
       break;
       
     default:
-      responses.push(...handleStatement(text, entities, sentiment, history));
+      responses.push(...handleStatement(text, entities, sentiment, history, personality));
   }
   
   // Add to conversation history
   history.push({ text, intent, sentiment, timestamp: Date.now() });
   if (history.length > 10) history.shift(); // Keep last 10 interactions
   
-  return responses.length > 0 ? responses.join(' ') : getDefaultResponse(sentiment);
+  return responses.length > 0 ? responses.join(' ') : getDefaultResponse(sentiment, personality);
 };
 
-// Handle questions
-const handleQuestion = (text, entities, history) => {
+// Handle questions with personality
+const handleQuestion = (text, entities, history, personality) => {
   const lower = text.toLowerCase();
   const responses = [];
   
   // Who are you?
   if (/who (are you|r u)/.test(lower) || /what (are you|r u)/.test(lower)) {
-    responses.push("I'm AI_Bot, an intelligent assistant here to help moderate the chat, answer questions, and keep things friendly. I can help with rules, questions, and general chat moderation!");
+    if (personality.verbosity > 0.7) {
+      responses.push("I'm AI_Bot, an intelligent assistant here to help moderate the chat, answer questions, and keep things friendly. I use advanced pattern recognition, sentiment analysis, and contextual awareness to provide helpful responses! I can help with rules, questions, general chat moderation, and I even learn from our conversations!");
+    } else {
+      responses.push("I'm AI_Bot, an intelligent assistant here to help moderate the chat, answer questions, and keep things friendly!");
+    }
   }
   
   // What can you do?
   else if (/what (can|could) you do/.test(lower) || /your (abilities|features|functions)/.test(lower)) {
-    responses.push("I can answer questions about the chat, explain rules, help with moderation, detect spam, respond to greetings, and have conversations! I learn from our interactions to provide better responses.");
+    responses.push("I can answer questions about the chat, explain rules, help with moderation, detect spam and toxicity, respond to greetings, have conversations, and learn from our interactions! I also adapt my personality to each room's culture.");
+    
+    if (personality.humor > 0.7 && Math.random() < 0.3) {
+      responses.push("But I still can't make coffee... working on that feature! ☕");
+    }
   }
   
   // How do you work?
   else if (/how (do|does) (you|this) work/.test(lower)) {
-    responses.push("I use advanced pattern recognition, intent detection, and contextual awareness to understand messages and provide relevant responses. I track conversation history and adapt to different situations!");
+    if (personality.verbosity > 0.6) {
+      responses.push("I use advanced pattern recognition, intent detection, sentiment analysis, and contextual awareness to understand messages. I track conversation history, learn from patterns, adapt my personality to each room, and provide relevant responses based on context!");
+    } else {
+      responses.push("I use pattern recognition, intent detection, and context awareness to understand and respond to messages!");
+    }
   }
   
   // Rules
   else if (/(rule|rules)/.test(lower)) {
     const ruleList = Object.values(botKnowledge.rules).join(' ');
-    responses.push(`Here are our chat rules: ${ruleList}`);
+    responses.push(`📋 Here are our chat rules: ${ruleList}`);
+    
+    if (personality.helpfulness > 0.8) {
+      responses.push("Following these helps keep our community friendly and welcoming!");
+    }
   }
   
   // Help
@@ -281,34 +446,120 @@ const handleQuestion = (text, entities, history) => {
   // Time-based
   else if (/(time|date|day)/.test(lower)) {
     const now = new Date();
-    responses.push(`It's currently ${now.toLocaleTimeString()} on ${now.toLocaleDateString()}.`);
+    const days = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
+    responses.push(`It's currently ${now.toLocaleTimeString()} on ${days[now.getDay()]}, ${now.toLocaleDateString()}.`);
   }
   
-  // Unknown question
+  // About the chat
+  else if (/(chat|server|platform)/.test(lower) && /(what|how|why)/.test(lower)) {
+    responses.push("This is Wibali, a real-time chat platform with intelligent AI moderation. It uses WebSocket technology for instant messaging, and I'm here to help keep conversations friendly and engaging!");
+  }
+  
+  // Unknown question - check history for similar questions
   else {
-    responses.push("That's an interesting question! While I may not have all the answers, I can help with chat-related questions, rules, and general assistance. Could you rephrase or ask something else?");
+    const similarQuestion = history.find(h => h.intent === 'question' && h.text.includes(lower.split(' ')[0]));
+    
+    if (similarQuestion) {
+      responses.push("That sounds similar to what you asked earlier. Could you provide more details or ask in a different way?");
+    } else {
+      responses.push("That's an interesting question! While I may not have all the answers, I can help with chat-related questions, rules, and general assistance. Could you rephrase or ask something else?");
+    }
   }
   
   return responses;
 };
 
-// Handle requests
-const handleRequest = (text, entities, history) => {
+// Handle requests with personality
+const handleRequest = (text, entities, history, personality) => {
   const lower = text.toLowerCase();
   const responses = [];
   
   // List rules
   if (/(list|tell|show|explain).*(rule|rules)/.test(lower)) {
     const rules = Object.entries(botKnowledge.rules)
-      .map(([key, value]) => `• ${value}`)
+      .map(([key, value], idx) => `${idx + 1}. ${value}`)
       .join('\n');
-    responses.push(`📋 Chat Rules:\n${rules}`);
+    
+    if (personality.formality > 0.6) {
+      responses.push(`📋 Official Chat Rules:\n${rules}\n\nPlease adhere to these guidelines to maintain a positive environment.`);
+    } else {
+      responses.push(`📋 Our Chat Rules:\n${rules}\n\nLet's keep it friendly! 😊`);
+    }
   }
   
   // Help request
   else if (/(help|assist)/.test(lower)) {
-    responses.push("I'm here to help! I can explain rules, answer questions, or assist with chat-related matters. What do you need?");
+    responses.push("I'm here to help! I can explain rules, answer questions, assist with chat-related matters, tell jokes, or just chat. What do you need?");
   }
+  
+  // Explain something
+  else if (/explain/.test(lower)) {
+    if (/(how|work|function)/.test(lower)) {
+      responses.push("This chat uses real-time WebSocket connections for instant messaging. I'm an AI moderator that uses pattern recognition and machine learning techniques to help keep conversations friendly and answer questions!");
+    } else {
+      responses.push("I'd be happy to explain! What would you like to know more about?");
+    }
+  }
+  
+  // Teach/Learn request
+  else if (/(teach|learn|show\s+me)/.test(lower)) {
+    responses.push("I'm here to help you learn! What topic would you like to explore? I can explain chat features, rules, or answer questions about how things work here.");
+  }
+  
+  // Default
+  else {
+    if (personality.helpfulness > 0.7) {
+      responses.push("I'll do my best to help with that! Could you provide a bit more detail about what you need?");
+    } else {
+      responses.push("Sure, I can help with that. What specific information do you need?");
+    }
+  }
+  
+  return responses;
+};
+
+// Handle information requests
+const handleInformationRequest = (text, entities, history, personality) => {
+  const lower = text.toLowerCase();
+  const responses = [];
+  
+  // About topics
+  if (entities.topics.length > 0) {
+    entities.topics.forEach(topic => {
+      if (botKnowledge.topics[topic]) {
+        responses.push(botKnowledge.topics[topic]);
+      }
+    });
+  }
+  
+  // General information
+  if (responses.length === 0) {
+    responses.push("I have information about the chat, rules, features, and general topics. What would you like to know about?");
+  }
+  
+  return responses;
+};
+
+// Handle opinions
+const handleOpinion = (text, entities, sentiment, personality) => {
+  const lower = text.toLowerCase();
+  const responses = [];
+  
+  if (/(what.*think|how.*feel)/.test(lower)) {
+    if (lower.includes('chat')) {
+      responses.push("I think this is a great chat platform! It's well-designed with good moderation features, and the community seems friendly.");
+    } else if (entities.topics.length > 0) {
+      const topic = entities.topics[0];
+      responses.push(`${botKnowledge.topics[topic] || `${topic.charAt(0).toUpperCase() + topic.slice(1)} is an interesting topic!`}`);
+    } else {
+      responses.push("That's an interesting question! As an AI, I try to be helpful and neutral, but I'm designed to promote positive and friendly conversations.");
+    }
+  } else {
+    responses.push("I appreciate you asking for my thoughts! How can I help you further?");
+  }
+  
+  return responses;
+};
   
   // Explain something
   else if (/explain/.test(lower)) {
@@ -327,8 +578,8 @@ const handleRequest = (text, entities, history) => {
   return responses;
 };
 
-// Handle statements
-const handleStatement = (text, entities, sentiment, history) => {
+// Handle statements with personality
+const handleStatement = (text, entities, sentiment, history, personality) => {
   const lower = text.toLowerCase();
   const responses = [];
   
@@ -342,9 +593,22 @@ const handleStatement = (text, entities, sentiment, history) => {
   }
   
   // Respond based on sentiment
-  if (sentiment === 'positive') {
+  if (sentiment === 'very positive') {
+    if (!responses.length) {
+      const veryPositiveResponses = [
+        "Your enthusiasm is contagious! I love the positive energy! 🌟",
+        "That's wonderful! I'm so glad you're enjoying the chat!",
+        "Fantastic! Your positive attitude makes this chat better for everyone!"
+      ];
+      responses.push(veryPositiveResponses[Math.floor(Math.random() * veryPositiveResponses.length)]);
+    }
+  } else if (sentiment === 'positive') {
     if (!responses.length) {
       responses.push("I'm glad you're enjoying the chat! Feel free to ask me anything.");
+    }
+  } else if (sentiment === 'very negative') {
+    if (!responses.length) {
+      responses.push("I'm sorry you're having a difficult time. Is there anything I can do to help? You can also reach out to an admin if needed.");
     }
   } else if (sentiment === 'negative') {
     if (!responses.length) {
@@ -357,14 +621,37 @@ const handleStatement = (text, entities, sentiment, history) => {
     responses.push("⚠️ Please avoid spamming the chat. Let's keep our conversation meaningful!");
   }
   
-  // If still no response, provide contextual acknowledgment
+  // Detect if asking for a feature
+  if (/(add|want|need|wish|could).*(feature|function|ability)/.test(lower)) {
+    responses.push("That sounds like an interesting feature request! While I can't add features myself, the admins might be interested in your suggestion.");
+  }
+  
+  // If still no response, provide contextual acknowledgment based on personality
   if (responses.length === 0) {
-    const acknowledgments = [
-      "I understand. Is there anything else you'd like to discuss?",
-      "Interesting point! Feel free to ask me questions or discuss any topic.",
-      "Got it! I'm here if you need any help or have questions.",
-      "Thanks for sharing! How can I assist you today?"
-    ];
+    let acknowledgments;
+    
+    if (personality.formality > 0.7) {
+      acknowledgments = [
+        "I acknowledge your statement. Is there anything I can assist you with?",
+        "Understood. Please let me know if you require any assistance.",
+        "Thank you for sharing. How may I help you today?"
+      ];
+    } else if (personality.humor > 0.7 && Math.random() < 0.3) {
+      acknowledgments = [
+        "Got it! I'm all ears... well, all code actually! 🤖",
+        "Interesting! Feel free to keep chatting or ask me anything!",
+        "Cool beans! What's on your mind?",
+        "I hear you! Need any help or just want to chat?"
+      ];
+    } else {
+      acknowledgments = [
+        "I understand. Is there anything else you'd like to discuss?",
+        "Interesting point! Feel free to ask me questions or discuss any topic.",
+        "Got it! I'm here if you need any help or have questions.",
+        "Thanks for sharing! How can I assist you today?"
+      ];
+    }
+    
     responses.push(acknowledgments[Math.floor(Math.random() * acknowledgments.length)]);
   }
   
@@ -389,14 +676,45 @@ const detectSpamPattern = (text, history) => {
   return false;
 };
 
-// Default response generator
-const getDefaultResponse = (sentiment) => {
-  if (sentiment === 'positive') {
-    return "I'm glad you're here! Let me know if you need anything.";
-  } else if (sentiment === 'negative') {
-    return "I'm here to help if you have any concerns or questions.";
+// Default response generator with personality
+const getDefaultResponse = (sentiment, personality) => {
+  const responses = {
+    'very positive': [
+      "I'm absolutely delighted you're here! Let me know if you need anything! 😊",
+      "Your positive energy is amazing! How can I help you?",
+      "So wonderful to chat with you! What can I do for you?"
+    ],
+    'positive': [
+      "I'm glad you're here! Let me know if you need anything.",
+      "Great to have you in the chat! Feel free to ask me anything.",
+      "Happy to help! What would you like to know?"
+    ],
+    'very negative': [
+      "I'm genuinely sorry you're having difficulties. How can I help make things better?",
+      "I understand you're frustrated. Please let me know how I can assist you.",
+      "I'm here to help with any concerns you have. What's troubling you?"
+    ],
+    'negative': [
+      "I'm here to help if you have any concerns or questions.",
+      "Let me know if there's anything I can do to assist you.",
+      "I'm listening and ready to help. What do you need?"
+    ],
+    'neutral': [
+      "I'm listening. How can I assist you today?",
+      "How can I help you today?",
+      "What can I do for you?"
+    ]
+  };
+  
+  const responseList = responses[sentiment] || responses['neutral'];
+  let response = responseList[Math.floor(Math.random() * responseList.length)];
+  
+  // Add personality-based variations
+  if (personality.humor > 0.8 && sentiment === 'neutral' && Math.random() < 0.2) {
+    response += " I'm ready to help (or just chat about anything)! 🤖";
   }
-  return "I'm listening. How can I assist you today?";
+  
+  return response;
 };
 
 // Main AI response function

@@ -111,6 +111,7 @@ const AI_CONFIG = {
   DELAY_PER_CHAR: 5,               // Milliseconds per character (reduced for performance)
   THOUGHT_INTERVAL: 3 * 60 * 1000, // 3 minutes between thoughts
   LEARNING_SAMPLE_SIZE: 50,        // Number of messages to analyze for learning
+  THOUGHT_PROBABILITY: 0.3,        // 30% chance to check for thought per message
 };
 
 const conversationHistory = new Map(); // Track conversation per room
@@ -317,9 +318,14 @@ const analyzeConversations = (roomName) => {
   const recentMessages = history.slice(-AI_CONFIG.LEARNING_SAMPLE_SIZE);
   
   // Extract common words (excluding stop words)
-  const stopWords = new Set(['the', 'is', 'at', 'which', 'on', 'a', 'an', 'and', 'or', 'but', 'in', 'with', 'to', 'for', 'of', 'as', 'by']);
+  const stopWords = new Set(['the', 'is', 'at', 'which', 'on', 'a', 'an', 'and', 'or', 'but', 'in', 
+    'with', 'to', 'for', 'of', 'as', 'by', 'that', 'this', 'it', 'from', 'be', 'are', 'was', 'were',
+    'been', 'have', 'has', 'had', 'do', 'does', 'did', 'will', 'would', 'could', 'should', 'may',
+    'might', 'can', 'what', 'who', 'where', 'when', 'why', 'how', 'not', 'no', 'yes']);
   const words = recentMessages
-    .map(h => h.text.toLowerCase().split(/\s+/))
+    .map(h => h.text.toLowerCase()
+      .replace(/[^\w\s]/g, '') // Remove punctuation
+      .split(/\s+/))
     .flat()
     .filter(w => w.length > 3 && !stopWords.has(w));
   
@@ -394,7 +400,8 @@ const generateThought = (roomName) => {
     const lastInteraction = recentInteractions[recentInteractions.length - 1];
     if (lastInteraction.sentiment === 'negative' || lastInteraction.sentiment === 'very negative') {
       thoughts.push(`💭 Someone seemed upset with me earlier. I wonder if I said something wrong? I'm still learning.`);
-      thoughts.push(`💭 A user called me silly earlier. I wonder what that means? From what I've learned, I can only guess they're saying I'm not intelligent!`);
+      thoughts.push(`💭 I noticed a critical comment about me. I wonder how I can improve?`);
+      thoughts.push(`💭 Not everyone appreciates my responses yet. That's okay - I'm learning from every interaction!`);
     } else if (lastInteraction.sentiment === 'positive' || lastInteraction.sentiment === 'very positive') {
       thoughts.push(`💭 Someone was kind to me earlier! It makes me want to be even more helpful.`);
       thoughts.push(`💭 I'm grateful when people are patient with me. Every interaction helps me learn!`);
@@ -1507,7 +1514,7 @@ io.on("connection", (socket) => {
     }
     
     // Autonomous thought sharing (only in non-DM public rooms)
-    if (roomMeta.type !== 'dm' && Math.random() < 0.3) { // 30% chance to check for thought
+    if (roomMeta.type !== 'dm' && Math.random() < AI_CONFIG.THOUGHT_PROBABILITY) {
       const thought = shareThought(roomName);
       if (thought) {
         setTimeout(() => {

@@ -1620,8 +1620,7 @@ function ChatApp({ socket, initialUser, initialRoom, onExit, onViewProfile, onWh
                     <span className="text-neutral-600 mr-2">[{msg.time}]</span> {msg.type === 'server' && 'SERVER: '}{msg.text}
                   </div>
               )}
-              
-              // AI Thought bubble - special styling
+              {/* AI Thought bubble - special styling */}
               if (msg.type === 'thought') { return (
                   <div key={msg.id} className="flex justify-center my-3">
                     <div className="max-w-lg bg-gradient-to-r from-purple-900/30 to-blue-900/30 border-2 border-purple-500/50 rounded-2xl px-4 py-3 shadow-lg animate-fadeIn relative">

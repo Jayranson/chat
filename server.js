@@ -99,24 +99,465 @@ const createBotMessage = (room, text) => {
   messagesByRoom[room].push(message);
   io.to(room).emit("chat message", message);
 };
-const getAIResponse = async (inputText) => {
-  return new Promise((resolve) => {
-    const lowerText = inputText.toLowerCase();
-    let response = "I'm processing that. Feel free to ask me about the rules or for help!"; // Default
-    if (lowerText.includes("hello") || lowerText.includes("hi")) {
-        response = "Hello there! This is my mock response for testing.";
-    } else if (lowerText.includes("help")) {
-        response = "I'm a mock bot! The real AI is not connected. This proves the system works.";
-    } else if (lowerText.includes("who are you")) {
-        response = "I am AI_Bot (Test Mode). I'm here to help you test the chat functionality.";
-    } else if (lowerText.includes("rules")) {
-        response = "The rules are: Be respectful, no spamming, and have fun testing!";
+// --- Enhanced AI System ---
+const conversationHistory = new Map(); // Track conversation per room
+const userSentiment = new Map(); // Track user sentiment
+const botKnowledge = {
+  greetings: ["Hello!", "Hi there!", "Hey! How can I help you?", "Greetings!", "Welcome!"],
+  farewells: ["Goodbye!", "See you later!", "Take care!", "Farewell!"],
+  rules: {
+    respect: "Be respectful to all users.",
+    spam: "No spamming or flooding the chat.",
+    content: "Keep content appropriate and safe for work.",
+    admins: "Follow admin instructions at all times.",
+    privacy: "Don't share personal information."
+  },
+  topics: {
+    music: "I love discussing music! What's your favorite genre?",
+    help: "I'm here to assist you. What do you need help with?",
+    chat: "This is a great place to chat with others!",
+    moderation: "I help keep this chat safe and friendly."
+  }
+};
+
+// Intent recognition
+const recognizeIntent = (text) => {
+  const lower = text.toLowerCase();
+  
+  // Remove bot mention
+  const cleanText = lower.replace(/@ai_bot/g, '').trim();
+  
+  // Greetings
+  if (/^(hi|hello|hey|greetings|howdy|sup|yo)\b/.test(cleanText)) return 'greeting';
+  
+  // Farewells
+  if (/^(bye|goodbye|see you|farewell|cya)\b/.test(cleanText)) return 'farewell';
+  
+  // Questions
+  if (/^(what|who|where|when|why|how|can|could|would|should|is|are|do|does)\b/.test(cleanText)) return 'question';
+  
+  // Commands/Requests
+  if (/^(tell|show|explain|list|give|help)\b/.test(cleanText)) return 'request';
+  
+  // Thanks
+  if (/(thank|thanks|thx|ty|appreciate)/.test(cleanText)) return 'gratitude';
+  
+  // Complaints
+  if (/(spam|annoying|stop|quiet|shut up)/.test(cleanText)) return 'complaint';
+  
+  return 'statement';
+};
+
+// Sentiment analysis (simple)
+const analyzeSentiment = (text) => {
+  const lower = text.toLowerCase();
+  
+  const positiveWords = /(good|great|awesome|excellent|love|like|happy|thanks|wonderful|amazing|fantastic)/g;
+  const negativeWords = /(bad|hate|terrible|awful|stupid|angry|annoying|worst|horrible|sucks)/g;
+  
+  const positiveCount = (lower.match(positiveWords) || []).length;
+  const negativeCount = (lower.match(negativeWords) || []).length;
+  
+  if (positiveCount > negativeCount) return 'positive';
+  if (negativeCount > positiveCount) return 'negative';
+  return 'neutral';
+};
+
+// Entity extraction
+const extractEntities = (text, roomUsers) => {
+  const entities = { users: [], topics: [], keywords: [] };
+  
+  // Extract mentioned users
+  const userMentions = text.match(/@(\w+)/g) || [];
+  entities.users = userMentions.map(m => m.substring(1));
+  
+  // Extract topics
+  const topics = Object.keys(botKnowledge.topics);
+  topics.forEach(topic => {
+    if (text.toLowerCase().includes(topic)) {
+      entities.topics.push(topic);
     }
-    setTimeout(() => {
+  });
+  
+  // Extract important keywords
+  const keywords = text.toLowerCase().match(/\b(rule|help|question|problem|issue|admin|ban|kick|mute)\b/g) || [];
+  entities.keywords = [...new Set(keywords)];
+  
+  return entities;
+};
+
+// Generate contextual response
+const generateResponse = (text, intent, sentiment, entities, roomName) => {
+  const responses = [];
+  
+  // Get or create conversation history for this room
+  if (!conversationHistory.has(roomName)) {
+    conversationHistory.set(roomName, []);
+  }
+  const history = conversationHistory.get(roomName);
+  
+  // Handle different intents
+  switch (intent) {
+    case 'greeting':
+      if (sentiment === 'positive') {
+        responses.push("Hello! I'm delighted to help you today!");
+      } else {
+        const greeting = botKnowledge.greetings[Math.floor(Math.random() * botKnowledge.greetings.length)];
+        responses.push(greeting);
+      }
+      break;
+      
+    case 'farewell':
+      const farewell = botKnowledge.farewells[Math.floor(Math.random() * botKnowledge.farewells.length)];
+      responses.push(farewell);
+      break;
+      
+    case 'gratitude':
+      responses.push("You're welcome! Happy to help anytime.");
+      break;
+      
+    case 'complaint':
+      if (text.toLowerCase().includes('spam')) {
+        responses.push("I understand your concern. If you see spam, please report it to the admins.");
+      } else {
+        responses.push("I apologize if I've been bothering you. I'm here to help when needed!");
+      }
+      break;
+      
+    case 'question':
+      responses.push(...handleQuestion(text, entities, history));
+      break;
+      
+    case 'request':
+      responses.push(...handleRequest(text, entities, history));
+      break;
+      
+    default:
+      responses.push(...handleStatement(text, entities, sentiment, history));
+  }
+  
+  // Add to conversation history
+  history.push({ text, intent, sentiment, timestamp: Date.now() });
+  if (history.length > 10) history.shift(); // Keep last 10 interactions
+  
+  return responses.length > 0 ? responses.join(' ') : getDefaultResponse(sentiment);
+};
+
+// Handle questions
+const handleQuestion = (text, entities, history) => {
+  const lower = text.toLowerCase();
+  const responses = [];
+  
+  // Who are you?
+  if (/who (are you|r u)/.test(lower) || /what (are you|r u)/.test(lower)) {
+    responses.push("I'm AI_Bot, an intelligent assistant here to help moderate the chat, answer questions, and keep things friendly. I can help with rules, questions, and general chat moderation!");
+  }
+  
+  // What can you do?
+  else if (/what (can|could) you do/.test(lower) || /your (abilities|features|functions)/.test(lower)) {
+    responses.push("I can answer questions about the chat, explain rules, help with moderation, detect spam, respond to greetings, and have conversations! I learn from our interactions to provide better responses.");
+  }
+  
+  // How do you work?
+  else if (/how (do|does) (you|this) work/.test(lower)) {
+    responses.push("I use advanced pattern recognition, intent detection, and contextual awareness to understand messages and provide relevant responses. I track conversation history and adapt to different situations!");
+  }
+  
+  // Rules
+  else if (/(rule|rules)/.test(lower)) {
+    const ruleList = Object.values(botKnowledge.rules).join(' ');
+    responses.push(`Here are our chat rules: ${ruleList}`);
+  }
+  
+  // Help
+  else if (/(help|assist|support)/.test(lower)) {
+    if (entities.keywords.includes('problem') || entities.keywords.includes('issue')) {
+      responses.push("I'm here to help! Can you describe the problem you're experiencing? If it's urgent, you can also contact an admin.");
+    } else {
+      responses.push("I can help with questions about the chat, explain rules, or assist with general inquiries. What would you like to know?");
+    }
+  }
+  
+  // Time-based
+  else if (/(time|date|day)/.test(lower)) {
+    const now = new Date();
+    responses.push(`It's currently ${now.toLocaleTimeString()} on ${now.toLocaleDateString()}.`);
+  }
+  
+  // Unknown question
+  else {
+    responses.push("That's an interesting question! While I may not have all the answers, I can help with chat-related questions, rules, and general assistance. Could you rephrase or ask something else?");
+  }
+  
+  return responses;
+};
+
+// Handle requests
+const handleRequest = (text, entities, history) => {
+  const lower = text.toLowerCase();
+  const responses = [];
+  
+  // List rules
+  if (/(list|tell|show|explain).*(rule|rules)/.test(lower)) {
+    const rules = Object.entries(botKnowledge.rules)
+      .map(([key, value]) => `• ${value}`)
+      .join('\n');
+    responses.push(`📋 Chat Rules:\n${rules}`);
+  }
+  
+  // Help request
+  else if (/(help|assist)/.test(lower)) {
+    responses.push("I'm here to help! I can explain rules, answer questions, or assist with chat-related matters. What do you need?");
+  }
+  
+  // Explain something
+  else if (/explain/.test(lower)) {
+    if (/(how|work|function)/.test(lower)) {
+      responses.push("This chat uses real-time WebSocket connections for instant messaging. I'm an AI moderator that helps keep conversations friendly and answers questions!");
+    } else {
+      responses.push("I'd be happy to explain! What would you like to know more about?");
+    }
+  }
+  
+  // Default
+  else {
+    responses.push("I'll do my best to help with that. Could you provide more details?");
+  }
+  
+  return responses;
+};
+
+// Handle statements
+const handleStatement = (text, entities, sentiment, history) => {
+  const lower = text.toLowerCase();
+  const responses = [];
+  
+  // Respond to topics
+  if (entities.topics.length > 0) {
+    entities.topics.forEach(topic => {
+      if (botKnowledge.topics[topic]) {
+        responses.push(botKnowledge.topics[topic]);
+      }
+    });
+  }
+  
+  // Respond based on sentiment
+  if (sentiment === 'positive') {
+    if (!responses.length) {
+      responses.push("I'm glad you're enjoying the chat! Feel free to ask me anything.");
+    }
+  } else if (sentiment === 'negative') {
+    if (!responses.length) {
+      responses.push("I sense some frustration. Is there something I can help you with?");
+    }
+  }
+  
+  // Check for spam patterns
+  if (detectSpamPattern(text, history)) {
+    responses.push("⚠️ Please avoid spamming the chat. Let's keep our conversation meaningful!");
+  }
+  
+  // If still no response, provide contextual acknowledgment
+  if (responses.length === 0) {
+    const acknowledgments = [
+      "I understand. Is there anything else you'd like to discuss?",
+      "Interesting point! Feel free to ask me questions or discuss any topic.",
+      "Got it! I'm here if you need any help or have questions.",
+      "Thanks for sharing! How can I assist you today?"
+    ];
+    responses.push(acknowledgments[Math.floor(Math.random() * acknowledgments.length)]);
+  }
+  
+  return responses;
+};
+
+// Detect spam patterns
+const detectSpamPattern = (text, history) => {
+  // Check for repeated messages
+  const recentMessages = history.slice(-5);
+  const repeatedCount = recentMessages.filter(h => h.text.toLowerCase() === text.toLowerCase()).length;
+  if (repeatedCount >= 2) return true;
+  
+  // Check for excessive caps
+  const capsRatio = (text.match(/[A-Z]/g) || []).length / text.length;
+  if (capsRatio > 0.7 && text.length > 10) return true;
+  
+  // Check for excessive punctuation
+  const punctRatio = (text.match(/[!?]{2,}/g) || []).length;
+  if (punctRatio > 3) return true;
+  
+  return false;
+};
+
+// Default response generator
+const getDefaultResponse = (sentiment) => {
+  if (sentiment === 'positive') {
+    return "I'm glad you're here! Let me know if you need anything.";
+  } else if (sentiment === 'negative') {
+    return "I'm here to help if you have any concerns or questions.";
+  }
+  return "I'm listening. How can I assist you today?";
+};
+
+// Main AI response function
+const getAIResponse = async (inputText, roomName = 'general', roomUsers = []) => {
+  return new Promise((resolve) => {
+    try {
+      // Recognize intent
+      const intent = recognizeIntent(inputText);
+      
+      // Analyze sentiment
+      const sentiment = analyzeSentiment(inputText);
+      
+      // Extract entities
+      const entities = extractEntities(inputText, roomUsers);
+      
+      // Generate contextual response
+      const response = generateResponse(inputText, intent, sentiment, entities, roomName);
+      
+      // Simulate processing time (make it feel natural)
+      const delay = Math.min(500 + response.length * 10, 2000);
+      
+      setTimeout(() => {
         resolve(response);
-    }, 1000);
+      }, delay);
+      
+    } catch (error) {
+      console.error('AI Error:', error);
+      resolve("I apologize, but I encountered an issue processing that. Please try again!");
+    }
   });
 };
+// --- End Enhanced AI System ---
+
+// --- AI Moderation Features ---
+// Toxicity detection
+const toxicPatterns = {
+  severe: [
+    /\b(fuck|shit|damn|hell|ass|bitch|bastard|cunt)\b/i,
+    /\b(idiot|stupid|moron|dumb|retard)\b/i,
+  ],
+  moderate: [
+    /\b(shut up|hate you|suck|loser|noob)\b/i,
+  ],
+  spam: [
+    /(.)\1{10,}/, // Repeated characters
+    /[!?]{5,}/, // Excessive punctuation
+  ]
+};
+
+const detectToxicity = (text) => {
+  const results = { level: 'clean', patterns: [] };
+  
+  // Check severe patterns
+  for (const pattern of toxicPatterns.severe) {
+    if (pattern.test(text)) {
+      results.level = 'severe';
+      results.patterns.push('offensive language');
+      break;
+    }
+  }
+  
+  // Check moderate patterns
+  if (results.level === 'clean') {
+    for (const pattern of toxicPatterns.moderate) {
+      if (pattern.test(text)) {
+        results.level = 'moderate';
+        results.patterns.push('potentially offensive');
+        break;
+      }
+    }
+  }
+  
+  // Check spam patterns
+  for (const pattern of toxicPatterns.spam) {
+    if (pattern.test(text)) {
+      results.patterns.push('spam-like');
+      if (results.level === 'clean') results.level = 'moderate';
+    }
+  }
+  
+  return results;
+};
+
+// AI-powered user behavior tracking
+const userBehaviorTracking = new Map();
+
+const trackUserBehavior = (userId, action) => {
+  if (!userBehaviorTracking.has(userId)) {
+    userBehaviorTracking.set(userId, {
+      messageCount: 0,
+      toxicityScore: 0,
+      spamCount: 0,
+      lastMessageTime: 0,
+      warnings: 0
+    });
+  }
+  
+  const behavior = userBehaviorTracking.get(userId);
+  
+  switch (action.type) {
+    case 'message':
+      behavior.messageCount++;
+      behavior.lastMessageTime = Date.now();
+      
+      // Detect rapid messaging (potential spam)
+      if (action.timeSinceLast < 1000) {
+        behavior.spamCount++;
+      }
+      
+      // Analyze toxicity
+      if (action.toxicity) {
+        if (action.toxicity.level === 'severe') {
+          behavior.toxicityScore += 3;
+          behavior.warnings++;
+        } else if (action.toxicity.level === 'moderate') {
+          behavior.toxicityScore += 1;
+        }
+      }
+      break;
+      
+    case 'reset':
+      behavior.toxicityScore = Math.max(0, behavior.toxicityScore - 1);
+      behavior.spamCount = Math.max(0, behavior.spamCount - 1);
+      break;
+  }
+  
+  return behavior;
+};
+
+// Decay user scores over time
+setInterval(() => {
+  for (const [userId, behavior] of userBehaviorTracking.entries()) {
+    const timeSinceLastMessage = Date.now() - behavior.lastMessageTime;
+    
+    // Decay after 5 minutes of inactivity
+    if (timeSinceLastMessage > 5 * 60 * 1000) {
+      trackUserBehavior(userId, { type: 'reset' });
+    }
+  }
+}, 60000); // Check every minute
+
+// AI suggestion for moderators
+const generateModSuggestion = (behavior, username) => {
+  const suggestions = [];
+  
+  if (behavior.toxicityScore >= 5) {
+    suggestions.push(`⚠️ ${username} has high toxicity score (${behavior.toxicityScore}). Consider warning or muting.`);
+  }
+  
+  if (behavior.spamCount >= 5) {
+    suggestions.push(`⚠️ ${username} is sending messages rapidly (${behavior.spamCount} rapid messages). Possible spam.`);
+  }
+  
+  if (behavior.warnings >= 3) {
+    suggestions.push(`🚨 ${username} has ${behavior.warnings} warnings. Consider temporary ban.`);
+  }
+  
+  return suggestions;
+};
+// --- End AI Moderation Features ---
+
 const findUserByUsername = (username) => {
   const normalizedUsername = username.toLowerCase();
   const onlineSocketId = Object.keys(onlineUsers).find(socketId => 
@@ -521,6 +962,60 @@ io.on("connection", (socket) => {
       return socket.emit("message limit reached");
     }
 
+    // AI-powered moderation: Check for toxicity
+    const toxicityCheck = detectToxicity(text);
+    
+    // Track user behavior
+    const lastBehavior = userBehaviorTracking.get(user.id);
+    const timeSinceLast = lastBehavior ? (Date.now() - lastBehavior.lastMessageTime) : 10000;
+    const behavior = trackUserBehavior(user.id, {
+      type: 'message',
+      timeSinceLast,
+      toxicity: toxicityCheck
+    });
+    
+    // AI moderation response for non-admins
+    if (user.role !== 'admin' && roomMeta.type !== 'dm') {
+      // Severe toxicity - block message and warn user
+      if (toxicityCheck.level === 'severe') {
+        sendSystemMessageToSocket(socket.id, roomName, 
+          "⚠️ AI_Bot: Your message was blocked due to offensive language. Please keep the chat respectful.");
+        
+        // Notify admins about the incident
+        const suggestions = generateModSuggestion(behavior, user.username);
+        Object.values(onlineUsers).forEach(onlineUser => {
+          if (onlineUser.role === 'admin') {
+            const adminSocketId = getSocketIdByUserId(onlineUser.id);
+            if (adminSocketId) {
+              sendSystemMessageToSocket(adminSocketId, roomName, 
+                `🤖 AI Alert: ${user.username} attempted to send offensive content. ${suggestions.join(' ')}`);
+            }
+          }
+        });
+        return; // Block the message
+      }
+      
+      // Moderate toxicity or spam - allow but warn
+      if (toxicityCheck.level === 'moderate' || behavior.spamCount >= 3) {
+        sendSystemMessageToSocket(socket.id, roomName, 
+          "⚠️ AI_Bot: Please be mindful of your language and posting frequency. Continued violations may result in moderation.");
+      }
+      
+      // High toxicity score - notify admins
+      if (behavior.toxicityScore >= 5) {
+        const suggestions = generateModSuggestion(behavior, user.username);
+        Object.values(onlineUsers).forEach(onlineUser => {
+          if (onlineUser.role === 'admin') {
+            const adminSocketId = getSocketIdByUserId(onlineUser.id);
+            if (adminSocketId) {
+              sendSystemMessageToSocket(adminSocketId, roomName, 
+                `🤖 AI Alert: ${suggestions.join(' ')}`);
+            }
+          }
+        });
+      }
+    }
+
     const message = {
       id: `${Date.now()}-${Math.random().toString(36).substr(2, 9)}`,
       user: user.username, text,
@@ -540,7 +1035,8 @@ io.on("connection", (socket) => {
 
     // Only check for bot messages in non-DM rooms
     if (roomMeta.type !== 'dm' && text.toLowerCase().startsWith('@ai_bot')) {
-      getAIResponse(text).then(response => {
+      const currentRoomUsers = getUsersInRoom(roomName);
+      getAIResponse(text, roomName, currentRoomUsers).then(response => {
           createBotMessage(roomName, response);
       }).catch(err => {
           createBotMessage(roomName, "I'm experiencing a system error. Please try again later.");

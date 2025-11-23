@@ -187,7 +187,7 @@ const recognizeIntent = (text) => {
   if (/(know|learn|understand|info|information|detail|about)/.test(cleanText)) return 'information';
   
   // Opinions/Thoughts
-  if /(think|feel|opinion|thought|believe|seem)/.test(cleanText)) return 'opinion';
+  if (/(think|feel|opinion|thought|believe|seem)/.test(cleanText)) return 'opinion';
   
   return 'statement';
 };

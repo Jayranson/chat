@@ -112,7 +112,6 @@ const AI_CONFIG = {
 };
 
 const conversationHistory = new Map(); // Track conversation per room
-const userSentiment = new Map(); // Track user sentiment
 const aiMemory = new Map(); // Long-term memory for learning
 const conversationPatterns = new Map(); // Learn common patterns
 
@@ -728,8 +727,10 @@ const getAIResponse = async (inputText, roomName = 'general', roomUsers = []) =>
       const response = generateResponse(inputText, intent, sentiment, entities, roomName);
       
       // Simulate processing time (make it feel natural)
+      // Calculate delay with response length capped at 200 chars for performance
+      const cappedLength = Math.min(response.length, 200);
       const delay = Math.min(
-        AI_CONFIG.MIN_RESPONSE_DELAY + response.length * AI_CONFIG.DELAY_PER_CHAR,
+        AI_CONFIG.MIN_RESPONSE_DELAY + cappedLength * AI_CONFIG.DELAY_PER_CHAR,
         AI_CONFIG.MAX_RESPONSE_DELAY
       );
       
@@ -747,10 +748,13 @@ const getAIResponse = async (inputText, roomName = 'general', roomUsers = []) =>
 
 // --- AI Moderation Features ---
 // Toxicity detection
-// Toxicity detection patterns (obfuscated for code cleanliness)
+// Toxicity detection patterns
+// NOTE: In production, consider storing these in an external config file or database
+// for easier management and to keep source code clean. The asterisks are for
+// code readability but don't affect regex matching.
 const toxicPatterns = {
   severe: [
-    // Strong offensive language patterns (base64 encoded patterns can be used in production)
+    // Strong offensive language patterns
     /\b(f[u*]ck|sh[i*]t|d[a*]mn|h[e*]ll|[a*]ss|b[i*]tch|b[a*]st[a*]rd|c[u*]nt)\b/i,
     /\b([i*]d[i*]ot|st[u*]p[i*]d|m[o*]r[o*]n|d[u*]mb|r[e*]t[a*]rd)\b/i,
   ],
@@ -843,8 +847,10 @@ const trackUserBehavior = (userId, action) => {
   return behavior;
 };
 
-// Decay user scores over time
-setInterval(() => {
+// Decay user scores over time (only runs when users exist)
+const decayInterval = setInterval(() => {
+  if (userBehaviorTracking.size === 0) return; // Skip if no users to process
+  
   for (const [userId, behavior] of userBehaviorTracking.entries()) {
     const timeSinceLastMessage = Date.now() - behavior.lastMessageTime;
     

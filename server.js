@@ -1001,10 +1001,57 @@ const getDefaultResponse = (sentiment, personality) => {
   return response;
 };
 
+// Admin command handler for AI
+const handleAdminCommand = (inputText, roomName, admin) => {
+  const lower = inputText.toLowerCase().trim();
+  
+  // Kick command
+  if (lower.includes('kick') && (lower.includes('me') || lower.includes('myself'))) {
+    return "I understand you're an administrator, but I cannot kick you from a private conversation with me. If you'd like to leave this DM, you can simply close the chat window. Is there something else I can help you with?";
+  }
+  
+  // Ban command (self)
+  if (lower.includes('ban') && (lower.includes('me') || lower.includes('myself'))) {
+    return "As an administrator, I cannot ban you. You have full control over the platform. If you need to test moderation features, I recommend creating a test account. How else can I assist you?";
+  }
+  
+  // Mute command (self)
+  if (lower.includes('mute') && (lower.includes('me') || lower.includes('myself'))) {
+    return "I cannot mute an administrator. Your role grants you immunity from moderation actions. Is there something specific you'd like to test or configure?";
+  }
+  
+  // System status command
+  if (lower.includes('system status') || lower.includes('server status')) {
+    return "✅ **System Status Report**\n\nAll systems operational. I'm functioning at full capacity with:\n- Intent recognition: Active\n- Sentiment analysis: Active\n- QA memory: Active\n- Moderation systems: Active\n- Room engine: Active\n\nHow can I help you manage the platform?";
+  }
+  
+  // Help with admin commands
+  if (lower.includes('admin commands') || lower.includes('admin help')) {
+    return "👑 **Admin Commands**\n\nWhile chatting with me, you can ask about:\n- System status\n- User management advice\n- Moderation best practices\n- Room configuration recommendations\n- Platform analytics interpretation\n\nI can't directly execute moderation actions, but I can guide you through the admin panel features. What would you like to know?";
+  }
+  
+  // Check for general admin requests
+  if (lower.includes('kick') || lower.includes('ban') || lower.includes('mute')) {
+    return "As an AI assistant, I don't have the ability to execute moderation actions directly. However, as an administrator, you can:\n\n1. Use the admin panel for user management\n2. Access the Live Moderation Dashboard\n3. Configure room-specific settings\n\nWould you like guidance on using any of these features?";
+  }
+  
+  return null; // Not an admin command, proceed with normal AI response
+};
+
 // Main AI response function
-const getAIResponse = async (inputText, roomName = 'general', roomUsers = []) => {
+const getAIResponse = async (inputText, roomName = 'general', roomUsers = [], requestingUser = null) => {
   return new Promise((resolve) => {
     try {
+      // Check for admin commands in DMs
+      if (requestingUser && requestingUser.role === 'admin') {
+        const adminCommand = handleAdminCommand(inputText, roomName, requestingUser);
+        if (adminCommand) {
+          // Return admin command response immediately
+          resolve(adminCommand);
+          return;
+        }
+      }
+      
       // Recognize intent
       const intent = recognizeIntent(inputText);
       
@@ -1791,9 +1838,9 @@ io.on("connection", (socket) => {
           lastMessageTime: now,
         });
 
-        // Get AI response
+        // Get AI response (pass user info for admin command detection)
         const currentRoomUsers = getUsersInRoom(roomName);
-        getAIResponse(aiText, roomName, currentRoomUsers).then(response => {
+        getAIResponse(aiText, roomName, currentRoomUsers, user).then(response => {
           createBotMessage(roomName, response);
         }).catch(err => {
           createBotMessage(roomName, "I'm experiencing a system error. Please try again later.");

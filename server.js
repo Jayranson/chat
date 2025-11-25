@@ -1759,13 +1759,20 @@ io.on("connection", (socket) => {
         userAccounts[user.id].messagesCount = (userAccounts[user.id].messagesCount || 0) + 1;
     }
 
-    // Check for AI interaction in non-DM rooms
-    if (roomMeta.type !== 'dm') {
+    // Check for AI interaction in public rooms AND DMs with AI_Bot
+    const isAIBotDM = roomMeta.type === 'dm' && roomMeta.participants?.some(p => p.id === 'ai-bot-id');
+    
+    if (roomMeta.type !== 'dm' || isAIBotDM) {
       let isAICall = false;
       let aiText = text;
 
-      // Check if message is tagged with @ai_bot
-      if (text.toLowerCase().startsWith('@ai_bot')) {
+      // In DMs with AI_Bot, ALL messages are AI calls
+      if (isAIBotDM) {
+        isAICall = true;
+        aiText = text;
+      }
+      // In public rooms, check for @ai_bot tag
+      else if (text.toLowerCase().startsWith('@ai_bot')) {
         isAICall = true;
         // Strip the tag from the text we send to the AI
         aiText = text.replace(/^@ai_bot\s*/i, '').trim();
@@ -1895,12 +1902,13 @@ io.on("connection", (socket) => {
   
   socket.on("start dm", ({ targetUserId }) => {
     const user = onlineUsers[socket.id];
-    if (!user || user.isSummoned || user.id === targetUserId || targetUserId === 'ai-bot-id') return;
+    if (!user || user.isSummoned || user.id === targetUserId) return;
     
-    const targetSocketId = getSocketIdByUserId(targetUserId);
+    const isAIBot = targetUserId === 'ai-bot-id';
+    const targetSocketId = isAIBot ? null : getSocketIdByUserId(targetUserId);
     const targetUser = targetSocketId ? onlineUsers[targetSocketId] : null;
     
-    if (!user.settings.enableWhispers) return; 
+    if (!user.settings.enableWhispers && !isAIBot) return; 
     if (targetUser && !targetUser.settings.enableWhispers) {
       return;
     }
@@ -1928,13 +1936,20 @@ io.on("connection", (socket) => {
     dmRoom.lastActivity = Date.now(); 
 
     user.hiddenDMs = user.hiddenDMs.filter(dm => dm !== dmRoomName);
-    if (isNew) createSystemMessage(dmRoomName, "Conversation started.");
+    if (isNew) {
+      if (isAIBot) {
+        createSystemMessage(dmRoomName, "🤖 AI_Bot: Hello! I'm ready to help. Ask me anything!");
+      } else {
+        createSystemMessage(dmRoomName, "Conversation started.");
+      }
+    }
 
     if (user.location === 'lobby') {
       socket.emit("dm list update", getDMRoomsForUser(user));
     }
     
-    if (targetSocketId) {
+    // Only notify target if it's a real user (not AI_Bot)
+    if (targetSocketId && !isAIBot) {
       const target = onlineUsers[targetSocketId];
       target.hiddenDMs = target.hiddenDMs.filter(dm => dm !== dmRoomName);
       io.to(targetSocketId).emit("new whisper", dmRoom);

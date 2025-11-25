@@ -333,6 +333,131 @@ const UserContextMenu = ({
 // --- End Context Menu ---
 
 
+// --- Emoji Onboarding Component ---
+type EmojiOnboardingProps = { 
+  onComplete: (selectedRoom: string) => void;
+  onSkip: () => void;
+};
+
+const EmojiOnboarding = ({ onComplete, onSkip }: EmojiOnboardingProps) => {
+  const [step, setStep] = useState(0);
+  const [answers, setAnswers] = useState<string[]>([]);
+
+  const questions = [
+    {
+      emoji: '🎭',
+      question: "What's your vibe?",
+      options: [
+        { emoji: '😎', label: 'Chill & Relaxed', value: 'chill' },
+        { emoji: '🎪', label: 'Chaotic & Fun', value: 'chaotic' },
+        { emoji: '🤝', label: 'Supportive & Kind', value: 'supportive' },
+        { emoji: '💼', label: 'Serious & Professional', value: 'serious' },
+        { emoji: '😂', label: 'Comedy & Jokes', value: 'comedy' },
+      ]
+    },
+    {
+      emoji: '🛡️',
+      question: "How do you like your chat moderation?",
+      options: [
+        { emoji: '🔥', label: 'Wild & Free', value: 'wild' },
+        { emoji: '🌶️', label: 'Spicy but Reasonable', value: 'spicy' },
+        { emoji: '⚖️', label: 'Balanced', value: 'balanced' },
+        { emoji: '🤗', label: 'Safe & Supportive', value: 'safe' },
+        { emoji: '👶', label: 'Family-Friendly', value: 'teen' },
+      ]
+    },
+    {
+      emoji: '💬',
+      question: "What brings you here?",
+      options: [
+        { emoji: '🎮', label: 'Gaming & Fun', value: 'gaming' },
+        { emoji: '💡', label: 'Learning & Help', value: 'help' },
+        { emoji: '🎵', label: 'Music & Art', value: 'music' },
+        { emoji: '💬', label: 'Just Chatting', value: 'general' },
+        { emoji: '🤖', label: 'Tech & AI', value: 'tech' },
+      ]
+    },
+  ];
+
+  const handleAnswer = (value: string) => {
+    const newAnswers = [...answers, value];
+    setAnswers(newAnswers);
+
+    if (step < questions.length - 1) {
+      setStep(step + 1);
+    } else {
+      // Onboarding complete - match to room
+      const roomMatch = matchUserToRoom(newAnswers);
+      onComplete(roomMatch);
+    }
+  };
+
+  const matchUserToRoom = (userAnswers: string[]): string => {
+    const [vibe, moderation, interest] = userAnswers;
+
+    // Room matching logic
+    if (interest === 'help') return 'help';
+    if (interest === 'music') return 'music';
+    
+    // Default to general for most cases
+    if (vibe === 'chill' || vibe === 'balanced') return 'general';
+    if (vibe === 'comedy' || vibe === 'chaotic') return 'general'; // Could be comedy room
+    if (vibe === 'supportive' || moderation === 'safe') return 'help';
+    
+    return 'general'; // Fallback
+  };
+
+  const currentQuestion = questions[step];
+  const progress = ((step + 1) / questions.length) * 100;
+
+  return (
+    <div className="min-h-screen flex items-center justify-center p-4 bg-gradient-to-br from-neutral-900 via-purple-900/20 to-neutral-900">
+      <div className="max-w-2xl w-full bg-neutral-800 border-2 border-purple-500/30 rounded-2xl p-8 shadow-2xl">
+        {/* Progress bar */}
+        <div className="w-full bg-neutral-700 rounded-full h-2 mb-8">
+          <div 
+            className="bg-gradient-to-r from-purple-500 to-blue-500 h-2 rounded-full transition-all duration-300"
+            style={{ width: `${progress}%` }}
+          />
+        </div>
+
+        {/* Question */}
+        <div className="text-center mb-8">
+          <div className="text-6xl mb-4">{currentQuestion.emoji}</div>
+          <h2 className="text-3xl font-bold text-white mb-2">{currentQuestion.question}</h2>
+          <p className="text-neutral-400 text-sm">Step {step + 1} of {questions.length}</p>
+        </div>
+
+        {/* Options */}
+        <div className="space-y-3 mb-8">
+          {currentQuestion.options.map((option) => (
+            <button
+              key={option.value}
+              onClick={() => handleAnswer(option.value)}
+              className="w-full p-4 bg-neutral-700 hover:bg-purple-600/30 border-2 border-neutral-600 hover:border-purple-500 rounded-lg transition-all duration-200 flex items-center gap-4 group"
+            >
+              <span className="text-4xl">{option.emoji}</span>
+              <span className="text-lg font-medium text-white group-hover:text-purple-300">{option.label}</span>
+            </button>
+          ))}
+        </div>
+
+        {/* Skip button */}
+        <div className="text-center">
+          <button
+            onClick={onSkip}
+            className="text-neutral-500 hover:text-neutral-300 text-sm underline"
+          >
+            Skip onboarding →
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+};
+// --- End Emoji Onboarding ---
+
+
 // --- Landing Page ---
 type LandingPageProps = { onEnterChat: () => void; onShowChangelog: () => void; };
 const LandingPage = ({ onEnterChat, onShowChangelog }: LandingPageProps) => (
@@ -1337,6 +1462,11 @@ function ChatApp({ socket, initialUser, initialRoom, onExit, onViewProfile, onWh
   
   // NEW: State for report modal
   const [reportingUser, setReportingUser] = useState<User | null>(null);
+  
+  // NEW: State for room recap modal
+  const [showRecapModal, setShowRecapModal] = useState(false);
+  const [roomSummary, setRoomSummary] = useState<string>('');
+  const [loadingRecap, setLoadingRecap] = useState(false);
 
   const [unreadCountsByUser, setUnreadCountsByUser] = useState<Record<string, number>>({});
 
@@ -1344,6 +1474,27 @@ function ChatApp({ socket, initialUser, initialRoom, onExit, onViewProfile, onWh
   const typingTimeout = useRef<NodeJS.Timeout | null>(null);
   const audioCtx = useRef<AudioContext | null>(null);
   const settingsRef = useRef<UserSettings>({ enableSounds: true, enableWhispers: true });
+
+  const fetchRoomRecap = async () => {
+    setLoadingRecap(true);
+    try {
+      const response = await fetch(`http://localhost:3001/api/room/${currentRoom.name}/summary`);
+      if (response.ok) {
+        const data = await response.json();
+        setRoomSummary(data.text || 'No recent activity in this room.');
+        setShowRecapModal(true);
+      } else {
+        setRoomSummary('Unable to load room recap. Please try again.');
+        setShowRecapModal(true);
+      }
+    } catch (error) {
+      console.error('Error fetching recap:', error);
+      setRoomSummary('Unable to load room recap. Please try again.');
+      setShowRecapModal(true);
+    } finally {
+      setLoadingRecap(false);
+    }
+  };
 
   useEffect(() => {
     const counts: Record<string, number> = {};
@@ -1540,6 +1691,26 @@ function ChatApp({ socket, initialUser, initialRoom, onExit, onViewProfile, onWh
         />
       )}
       {showLimitModal && (<MessageLimitModal onRegister={onExit} />)}
+      {showRecapModal && (
+        <div className="fixed inset-0 bg-black/70 flex items-center justify-center z-50 p-4">
+          <div className="bg-neutral-800 border border-purple-500/50 rounded-lg p-6 max-w-2xl w-full max-h-[80vh] overflow-y-auto">
+            <div className="flex justify-between items-center mb-4">
+              <h3 className="text-xl font-bold text-purple-300 flex items-center gap-2">
+                📖 Previously in #{currentRoom.name}...
+              </h3>
+              <button onClick={() => setShowRecapModal(false)} className="text-neutral-400 hover:text-white text-2xl">&times;</button>
+            </div>
+            <div className="bg-neutral-900 rounded-lg p-4 mb-4">
+              <pre className="text-sm text-neutral-300 whitespace-pre-wrap font-mono">{roomSummary}</pre>
+            </div>
+            <div className="flex justify-end">
+              <button onClick={() => setShowRecapModal(false)} className="px-4 py-2 bg-purple-600 hover:bg-purple-700 text-white rounded-md">
+                Close
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
       {rebootModal && (<RebootModal data={rebootModal} />)}
       {editingMessage && (
         <EditModal 
@@ -1611,7 +1782,33 @@ function ChatApp({ socket, initialUser, initialRoom, onExit, onViewProfile, onWh
             {currentUser.role === 'admin' && currentRoom.type === 'judgement' && (<button onClick={handleReleaseUser} className="px-4 py-1 bg-green-600 text-white rounded-md hover:bg-green-700 font-semibold">Release User</button>)}
             {isSummoned && (<p className="text-red-500 font-bold">You are being held for judgement. You cannot leave.</p>)}
           </div>
-          {currentTopic && (<p className="text-sm text-neutral-500 italic mb-2">Topic: {currentTopic}</p>)}
+          {currentTopic && (
+            <div className="flex items-center justify-between mb-2">
+              <p className="text-sm text-neutral-500 italic">Topic: {currentTopic}</p>
+              {currentRoom.type !== 'dm' && (
+                <button
+                  onClick={fetchRoomRecap}
+                  disabled={loadingRecap}
+                  className="px-3 py-1 text-xs bg-purple-600 hover:bg-purple-700 text-white rounded-md transition-colors flex items-center gap-1 disabled:opacity-50"
+                  title="View room recap"
+                >
+                  📖 {loadingRecap ? 'Loading...' : 'Previously in this room...'}
+                </button>
+              )}
+            </div>
+          )}
+          {!currentTopic && currentRoom.type !== 'dm' && (
+            <div className="flex justify-end mb-2">
+              <button
+                onClick={fetchRoomRecap}
+                disabled={loadingRecap}
+                className="px-3 py-1 text-xs bg-purple-600 hover:bg-purple-700 text-white rounded-md transition-colors flex items-center gap-1 disabled:opacity-50"
+                title="View room recap"
+              >
+                📖 {loadingRecap ? 'Loading...' : 'Previously in this room...'}
+              </button>
+            </div>
+          )}
          
           <div className="flex-1 overflow-y-auto mb-4 space-y-2 no-scrollbar p-2">
             {messages.filter(msg => !(msg.type === 'user' && msg.user !== currentUser.username && ignoredUsers.find(id => usersWithDetails[msg.user]?.id === id) )).map((msg, index) => {
@@ -2428,7 +2625,7 @@ const AdminPanelPage = ({ socket, currentUser, onBackToLobby, onViewProfile, onJ
 const getDmRoomName = (id1: string, id2: string) => [id1, id2].sort().join('__DM__');
 
 export default function App() {
-  const [page, setPage] = useState<'landing' | 'auth' | 'changelog' | 'lobby' | 'chat' | 'admin'>('landing');
+  const [page, setPage] = useState<'landing' | 'auth' | 'changelog' | 'lobby' | 'chat' | 'admin' | 'onboarding'>('landing');
   const [socket, setSocket] = useState<Socket | null>(null);
   const [currentUser, setCurrentUser] = useState<UserAccount | null>(null);
   const [currentRoom, setCurrentRoom] = useState<Room | null>(null);
@@ -2443,6 +2640,9 @@ export default function App() {
   
   // NEW: State for Admin Warn Modal
   const [warnModalData, setWarnModalData] = useState<WarnModalData | null>(null);
+  
+  // NEW: State for onboarding
+  const [suggestedRoom, setSuggestedRoom] = useState<string>('general');
 
   const audioCtx = useRef<AudioContext | null>(null);
  
@@ -2669,7 +2869,19 @@ export default function App() {
      
       <div className="flex-1 min-h-0">
         {page === 'landing' && (
-          <LandingPage onEnterChat={() => setPage('auth')} onShowChangelog={() => setPage('changelog')} />
+          <LandingPage onEnterChat={() => setPage('onboarding')} onShowChangelog={() => setPage('changelog')} />
+        )}
+        {page === 'onboarding' && (
+          <EmojiOnboarding
+            onComplete={(roomName) => {
+              setSuggestedRoom(roomName);
+              setPage('auth');
+            }}
+            onSkip={() => {
+              setSuggestedRoom('general');
+              setPage('auth');
+            }}
+          />
         )}
         {page === 'changelog' && (
           <ChangelogPage onBack={() => page === 'landing' ? setPage('landing') : setPage('lobby')} />

@@ -118,7 +118,57 @@ const conversationHistory = new Map(); // Track conversation per room
 const aiMemory = new Map(); // Long-term memory for learning
 const conversationPatterns = new Map(); // Learn common patterns
 const aiLearnings = new Map(); // Store autonomous learnings
+const aiConversations = new Map(); // Track recent AI conversations per room for follow-up detection
 const lastThoughtTime = new Map(); // Track when thoughts were last shared per room
+
+// Follow-up conversation detection
+const FOLLOWUP_WINDOW_MS = 2 * 60 * 1000; // 2 minutes
+
+const looksLikeFollowup = (text) => {
+  const lower = text.toLowerCase().trim();
+
+  // Question patterns
+  if (lower.endsWith('?')) return true;
+  
+  // Continuation patterns
+  if (lower.startsWith('and ') || lower.startsWith('also ')) return true;
+  if (lower.startsWith('what about ') || lower.startsWith('how about ')) return true;
+  
+  // Question words at start
+  if (lower.startsWith('why ') || lower.startsWith('how ') || lower.startsWith('when ')) return true;
+  if (lower.startsWith('where ') || lower.startsWith('who ') || lower.startsWith('what ')) return true;
+  if (lower.startsWith('can you ') || lower.startsWith('could you ')) return true;
+  if (lower.startsWith('would you ') || lower.startsWith('will you ')) return true;
+  
+  // Clarification patterns
+  if (lower.startsWith('i mean ') || lower.startsWith('i meant ')) return true;
+  if (lower.includes('what i meant') || lower.includes('what i said')) return true;
+  
+  // Reference to previous conversation
+  if (lower.includes('you said') || lower.includes('you mentioned')) return true;
+  if (lower.includes('earlier') || lower.includes('before')) return true;
+  
+  // Short questions/responses that are likely follow-ups
+  if (lower.length < 20 && (lower.includes('?') || lower.match(/^(yes|no|yeah|nah|ok|okay|sure|really|seriously)\b/))) return true;
+
+  return false;
+};
+
+const shouldRouteToAIWithoutTag = (socket, roomName, text) => {
+  const convo = aiConversations.get(roomName);
+  if (!convo) return false;
+
+  const now = Date.now();
+
+  // Only the same user, within the time window
+  if (convo.userId !== socket.id) return false;
+  if (now - convo.lastMessageTime > FOLLOWUP_WINDOW_MS) return false;
+
+  // Only if it actually looks like a follow-up
+  if (!looksLikeFollowup(text)) return false;
+
+  return true;
+};
 
 const botKnowledge = {
   greetings: ["Hello!", "Hi there!", "Hey! How can I help you?", "Greetings!", "Welcome!"],
@@ -1503,14 +1553,39 @@ io.on("connection", (socket) => {
         userAccounts[user.id].messagesCount = (userAccounts[user.id].messagesCount || 0) + 1;
     }
 
-    // Only check for bot messages in non-DM rooms
-    if (roomMeta.type !== 'dm' && text.toLowerCase().startsWith('@ai_bot')) {
-      const currentRoomUsers = getUsersInRoom(roomName);
-      getAIResponse(text, roomName, currentRoomUsers).then(response => {
+    // Check for AI interaction in non-DM rooms
+    if (roomMeta.type !== 'dm') {
+      let isAICall = false;
+      let aiText = text;
+
+      // Check if message is tagged with @ai_bot
+      if (text.toLowerCase().startsWith('@ai_bot')) {
+        isAICall = true;
+        // Strip the tag from the text we send to the AI
+        aiText = text.replace(/^@ai_bot\s*/i, '').trim();
+      } 
+      // Check if this is a follow-up to a recent AI conversation
+      else if (shouldRouteToAIWithoutTag(socket, roomName, text)) {
+        isAICall = true;
+        aiText = text;
+      }
+
+      if (isAICall) {
+        // Update active conversation state
+        const now = Date.now();
+        aiConversations.set(roomName, {
+          userId: socket.id,
+          lastMessageTime: now,
+        });
+
+        // Get AI response
+        const currentRoomUsers = getUsersInRoom(roomName);
+        getAIResponse(aiText, roomName, currentRoomUsers).then(response => {
           createBotMessage(roomName, response);
-      }).catch(err => {
+        }).catch(err => {
           createBotMessage(roomName, "I'm experiencing a system error. Please try again later.");
-      });
+        });
+      }
     }
     
     // Autonomous thought sharing (only in non-DM public rooms)

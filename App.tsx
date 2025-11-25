@@ -165,9 +165,6 @@ const IconActivity = () => (
     <polyline points="22 12 18 12 15 21 9 3 6 12 2 12"></polyline>
   </svg>
 );
-    <path d="M7 16.01L7.01 15.99"></path><path d="M17 16.01L17.01 15.99"></path>
-  </svg>
-);
 const IconCheckBadge = () => (
   <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
     <path d="M3.85 8.62a4 4 0 0 1 4.78-4.78l1.4 1.4a1 1 0 0 0 1.4-1.4l-1.4-1.4A6 6 0 0 0 .14 12.38l1.4 1.4a1 1 0 0 0 1.4-1.4l-1.4-1.4Z"/>

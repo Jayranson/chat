@@ -2290,6 +2290,24 @@ const AdminPanelPage = ({ socket, currentUser, onBackToLobby, onViewProfile, onJ
   // NEW: State for report context modal
   const [viewingReport, setViewingReport] = useState<Report | null>(null);
 
+  // NEW: State for advanced admin features
+  const [chaosMode, setChaosMode] = useState(false);
+  const [selectedRoom, setSelectedRoom] = useState('general');
+  const [botPersonality, setBotPersonality] = useState({
+    humor: 0.5,
+    spiciness: 0.5,
+    empathy: 0.5,
+    formality: 0.5,
+    mischief: 0.3,
+    topicBias: 'general'
+  });
+  const [systemStats, setSystemStats] = useState({
+    uptime: 0,
+    messageCount: 0,
+    connections: 0,
+    errorCount: 0
+  });
+
   const fetchUsers = () => {
     socket.emit("admin:getAllUsers", (users: UserAccount[]) => {
       if (users) setAllUsers(users);
@@ -2443,6 +2461,54 @@ const AdminPanelPage = ({ socket, currentUser, onBackToLobby, onViewProfile, onJ
                     {openTickets.length}
                   </span>
                 )}
+              </button>
+            </li>
+            <li>
+              <button
+                onClick={() => setActiveTab('moderation')}
+                className={`w-full flex items-center gap-3 px-3 py-2 rounded-md text-lg ${activeTab === 'moderation' ? 'bg-blue-600 text-white' : 'hover:bg-neutral-700'}`}
+              >
+                <IconShieldCheck /> Live Moderation
+              </button>
+            </li>
+            <li>
+              <button
+                onClick={() => setActiveTab('rooms')}
+                className={`w-full flex items-center gap-3 px-3 py-2 rounded-md text-lg ${activeTab === 'rooms' ? 'bg-blue-600 text-white' : 'hover:bg-neutral-700'}`}
+              >
+                <IconSettings /> Room Config
+              </button>
+            </li>
+            <li>
+              <button
+                onClick={() => setActiveTab('health')}
+                className={`w-full flex items-center gap-3 px-3 py-2 rounded-md text-lg ${activeTab === 'health' ? 'bg-blue-600 text-white' : 'hover:bg-neutral-700'}`}
+              >
+                <IconActivity /> System Health
+              </button>
+            </li>
+            <li>
+              <button
+                onClick={() => setActiveTab('chaos')}
+                className={`w-full flex items-center gap-3 px-3 py-2 rounded-md text-lg ${activeTab === 'chaos' ? 'bg-red-600 text-white' : 'hover:bg-neutral-700 text-red-400'}`}
+              >
+                🎭 Chaos Mode
+              </button>
+            </li>
+            <li>
+              <button
+                onClick={() => setActiveTab('timemachine')}
+                className={`w-full flex items-center gap-3 px-3 py-2 rounded-md text-lg ${activeTab === 'timemachine' ? 'bg-purple-600 text-white' : 'hover:bg-neutral-700 text-purple-400'}`}
+              >
+                ⏰ Time Machine
+              </button>
+            </li>
+            <li>
+              <button
+                onClick={() => setActiveTab('personality')}
+                className={`w-full flex items-center gap-3 px-3 py-2 rounded-md text-lg ${activeTab === 'personality' ? 'bg-green-600 text-white' : 'hover:bg-neutral-700 text-green-400'}`}
+              >
+                🎨 Bot Personality
               </button>
             </li>
           </ul>
@@ -2612,6 +2678,326 @@ const AdminPanelPage = ({ socket, currentUser, onBackToLobby, onViewProfile, onJ
               </div>
             </div>
           )}
+
+          {/* NEW: Live Moderation Dashboard */}
+          {activeTab === 'moderation' && (
+            <div>
+              <h2 className="text-3xl font-bold mb-4">🛡️ Live Moderation Dashboard</h2>
+              <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-6">
+                <div className="bg-neutral-800 p-4 rounded-lg border border-blue-500/30">
+                  <h3 className="text-sm text-neutral-400 mb-2">Active Users</h3>
+                  <p className="text-3xl font-bold text-blue-400">{allUsers.filter(u => u.status !== 'offline').length}</p>
+                </div>
+                <div className="bg-neutral-800 p-4 rounded-lg border border-yellow-500/30">
+                  <h3 className="text-sm text-neutral-400 mb-2">AI Flags (Last Hour)</h3>
+                  <p className="text-3xl font-bold text-yellow-400">{reports.length}</p>
+                </div>
+                <div className="bg-neutral-800 p-4 rounded-lg border border-red-500/30">
+                  <h3 className="text-sm text-neutral-400 mb-2">High Risk Users</h3>
+                  <p className="text-3xl font-bold text-red-400">{allUsers.filter(u => u.isBanned || u.isGloballyMuted).length}</p>
+                </div>
+              </div>
+
+              <div className="bg-neutral-800 rounded-lg border border-neutral-700 p-4">
+                <h3 className="text-lg font-bold mb-4">🤖 AI Predictions & Quick Actions</h3>
+                <div className="space-y-3">
+                  {allUsers.filter(u => !u.isGuest && u.status !== 'offline').slice(0, 10).map(user => (
+                    <div key={user.id} className="flex items-center justify-between bg-neutral-700/50 p-3 rounded-lg">
+                      <div className="flex items-center gap-3">
+                        <div className={`w-3 h-3 rounded-full ${user.isBanned ? 'bg-red-500' : user.isGloballyMuted ? 'bg-yellow-500' : 'bg-green-500'}`} />
+                        <div>
+                          <p className="font-semibold">{user.username}</p>
+                          <p className="text-sm text-neutral-400">In: {user.status === 'lobby' ? 'Lobby' : user.status}</p>
+                        </div>
+                      </div>
+                      <div className="flex gap-2">
+                        {!user.isGloballyMuted && (
+                          <button onClick={() => handleMute(user.id, true)} className="px-3 py-1 text-xs bg-yellow-600 hover:bg-yellow-700 rounded-md">
+                            Mute
+                          </button>
+                        )}
+                        {user.isGloballyMuted && (
+                          <button onClick={() => handleMute(user.id, false)} className="px-3 py-1 text-xs bg-green-600 hover:bg-green-700 rounded-md">
+                            Unmute
+                          </button>
+                        )}
+                        {!user.isBanned && (
+                          <button onClick={() => handleBan(user.id)} className="px-3 py-1 text-xs bg-red-600 hover:bg-red-700 rounded-md">
+                            Ban
+                          </button>
+                        )}
+                        <button onClick={() => setWarningUser(user)} className="px-3 py-1 text-xs bg-blue-600 hover:bg-blue-700 rounded-md">
+                          Warn
+                        </button>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            </div>
+          )}
+
+          {/* NEW: Room Configuration Control */}
+          {activeTab === 'rooms' && (
+            <div>
+              <h2 className="text-3xl font-bold mb-4">⚙️ Room Configuration</h2>
+              <div className="mb-4">
+                <label className="block text-sm font-medium mb-2">Select Room</label>
+                <select 
+                  value={selectedRoom} 
+                  onChange={(e) => setSelectedRoom(e.target.value)}
+                  className="bg-neutral-700 border border-neutral-600 rounded-md px-3 py-2 w-full md:w-64"
+                >
+                  <option value="general">General</option>
+                  <option value="music">Music</option>
+                  <option value="help">Help</option>
+                </select>
+              </div>
+
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                <div className="bg-neutral-800 rounded-lg border border-neutral-700 p-4">
+                  <h3 className="text-lg font-bold mb-4">🎭 Room Mood</h3>
+                  <div className="space-y-2">
+                    {['chill', 'chaotic', 'supportive', 'serious', 'comedy'].map(mood => (
+                      <button key={mood} className="w-full px-4 py-2 bg-neutral-700 hover:bg-purple-600/30 border border-neutral-600 rounded-lg text-left capitalize">
+                        {mood === 'chill' && '😎'} {mood === 'chaotic' && '🎪'} {mood === 'supportive' && '🤝'} {mood === 'serious' && '💼'} {mood === 'comedy' && '😂'} {mood}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+
+                <div className="bg-neutral-800 rounded-lg border border-neutral-700 p-4">
+                  <h3 className="text-lg font-bold mb-4">🛡️ Safety Mode</h3>
+                  <div className="space-y-2">
+                    {['anything_goes', 'spicy_but_sane', 'balanced', 'support_only', 'teen_safe'].map(mode => (
+                      <button key={mode} className="w-full px-4 py-2 bg-neutral-700 hover:bg-blue-600/30 border border-neutral-600 rounded-lg text-left">
+                        {mode.replace('_', ' ')}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              </div>
+
+              <div className="mt-6 bg-neutral-800 rounded-lg border border-neutral-700 p-4">
+                <h3 className="text-lg font-bold mb-4">🤖 Bot Controls</h3>
+                <div className="space-y-3">
+                  <label className="flex items-center gap-3 cursor-pointer">
+                    <input type="checkbox" defaultChecked className="w-5 h-5" />
+                    <span>Enable AI_Bot</span>
+                  </label>
+                  <label className="flex items-center gap-3 cursor-pointer">
+                    <input type="checkbox" className="w-5 h-5" />
+                    <span>Enable Chaos_Bot</span>
+                  </label>
+                  <label className="flex items-center gap-3 cursor-pointer">
+                    <input type="checkbox" defaultChecked className="w-5 h-5" />
+                    <span>Enable Archive_Bot</span>
+                  </label>
+                </div>
+              </div>
+            </div>
+          )}
+
+          {/* NEW: System Health & Logs */}
+          {activeTab === 'health' && (
+            <div>
+              <h2 className="text-3xl font-bold mb-4">📊 System Health</h2>
+              <div className="grid grid-cols-1 md:grid-cols-4 gap-4 mb-6">
+                <div className="bg-neutral-800 p-4 rounded-lg border border-green-500/30">
+                  <h3 className="text-sm text-neutral-400 mb-2">Server Uptime</h3>
+                  <p className="text-2xl font-bold text-green-400">{Math.floor(systemStats.uptime / 3600)}h {Math.floor((systemStats.uptime % 3600) / 60)}m</p>
+                </div>
+                <div className="bg-neutral-800 p-4 rounded-lg border border-blue-500/30">
+                  <h3 className="text-sm text-neutral-400 mb-2">Messages/Hr</h3>
+                  <p className="text-2xl font-bold text-blue-400">{systemStats.messageCount}</p>
+                </div>
+                <div className="bg-neutral-800 p-4 rounded-lg border border-purple-500/30">
+                  <h3 className="text-sm text-neutral-400 mb-2">Connections</h3>
+                  <p className="text-2xl font-bold text-purple-400">{systemStats.connections}</p>
+                </div>
+                <div className="bg-neutral-800 p-4 rounded-lg border border-red-500/30">
+                  <h3 className="text-sm text-neutral-400 mb-2">Errors</h3>
+                  <p className="text-2xl font-bold text-red-400">{systemStats.errorCount}</p>
+                </div>
+              </div>
+
+              <div className="bg-neutral-800 rounded-lg border border-neutral-700 p-4 mb-4">
+                <h3 className="text-lg font-bold mb-4">🤖 Bot Activity Logs</h3>
+                <div className="bg-neutral-900 rounded p-3 font-mono text-sm max-h-64 overflow-y-auto">
+                  <div className="text-green-400">[{new Date().toLocaleTimeString()}] AI_Bot: Analyzed 50 messages in #general</div>
+                  <div className="text-blue-400">[{new Date().toLocaleTimeString()}] AI_Bot: Generated thought bubble</div>
+                  <div className="text-yellow-400">[{new Date().toLocaleTimeString()}] AI_Bot: Flagged toxic message</div>
+                  <div className="text-purple-400">[{new Date().toLocaleTimeString()}] AI_Bot: Cached QA pair for #help</div>
+                </div>
+              </div>
+
+              <div className="bg-neutral-800 rounded-lg border border-neutral-700 p-4">
+                <h3 className="text-lg font-bold mb-4">⚠️ Error Logs</h3>
+                <div className="bg-neutral-900 rounded p-3 font-mono text-sm max-h-64 overflow-y-auto text-red-400">
+                  <div>No errors in the last hour ✅</div>
+                </div>
+              </div>
+            </div>
+          )}
+
+          {/* NEW: Chaos Mode */}
+          {activeTab === 'chaos' && (
+            <div>
+              <h2 className="text-3xl font-bold mb-4">🎭 Chaos Mode</h2>
+              <div className="bg-gradient-to-r from-red-900/30 to-orange-900/30 border-2 border-red-500/50 rounded-lg p-6 mb-6">
+                <div className="flex items-center justify-between mb-4">
+                  <div>
+                    <h3 className="text-2xl font-bold text-red-400">Chaos Mode: {chaosMode ? 'ACTIVE 🔥' : 'Inactive'}</h3>
+                    <p className="text-neutral-300">Boost chaos, humor, and spontaneous events</p>
+                  </div>
+                  <button 
+                    onClick={() => setChaosMode(!chaosMode)}
+                    className={`px-6 py-3 rounded-lg font-bold text-lg ${chaosMode ? 'bg-red-600 hover:bg-red-700' : 'bg-green-600 hover:bg-green-700'}`}
+                  >
+                    {chaosMode ? 'Disable' : 'Activate'}
+                  </button>
+                </div>
+                {chaosMode && (
+                  <div className="bg-black/30 rounded p-4">
+                    <h4 className="font-bold mb-2">Active Effects:</h4>
+                    <ul className="space-y-1 text-sm">
+                      <li>✅ AI humor boosted to 90%</li>
+                      <li>✅ Chaos_Bot now active</li>
+                      <li>✅ Random events every 5 minutes</li>
+                      <li>✅ Toxicity threshold relaxed</li>
+                    </ul>
+                  </div>
+                )}
+              </div>
+
+              <div className="bg-neutral-800 rounded-lg border border-neutral-700 p-4">
+                <h3 className="text-lg font-bold mb-4">🎲 Spontaneous Events</h3>
+                <div className="space-y-2">
+                  {[
+                    { emoji: '🔥', name: 'Roast Battle', desc: 'Roast the user above you' },
+                    { emoji: '😶', name: 'Emoji Only', desc: 'Reply only in emojis for 2 mins' },
+                    { emoji: '🎲', name: 'Random Topics', desc: 'AI generates random conversation starters' },
+                    { emoji: '🎭', name: 'Reverse Roles', desc: 'Mods become users, users become mods' },
+                    { emoji: '💬', name: 'Story Chain', desc: 'Everyone adds one sentence to a story' },
+                  ].map(event => (
+                    <button key={event.name} className="w-full flex items-center gap-3 px-4 py-3 bg-neutral-700 hover:bg-red-600/30 border border-neutral-600 rounded-lg text-left">
+                      <span className="text-2xl">{event.emoji}</span>
+                      <div>
+                        <p className="font-semibold">{event.name}</p>
+                        <p className="text-sm text-neutral-400">{event.desc}</p>
+                      </div>
+                      <button className="ml-auto px-3 py-1 bg-red-600 hover:bg-red-700 rounded text-sm">Trigger</button>
+                    </button>
+                  ))}
+                </div>
+              </div>
+            </div>
+          )}
+
+          {/* NEW: Room Time Machine */}
+          {activeTab === 'timemachine' && (
+            <div>
+              <h2 className="text-3xl font-bold mb-4">⏰ Room Time Machine</h2>
+              <div className="bg-neutral-800 rounded-lg border border-neutral-700 p-4 mb-4">
+                <label className="block text-sm font-medium mb-2">Select Room to Scrub</label>
+                <select className="bg-neutral-700 border border-neutral-600 rounded-md px-3 py-2 w-full md:w-64 mb-4">
+                  <option value="general">General</option>
+                  <option value="music">Music</option>
+                  <option value="help">Help</option>
+                </select>
+
+                <div className="mb-4">
+                  <label className="block text-sm font-medium mb-2">Time Range (Last 24 hours)</label>
+                  <input type="range" min="0" max="24" className="w-full" />
+                  <div className="flex justify-between text-sm text-neutral-400 mt-1">
+                    <span>24h ago</span>
+                    <span>Now</span>
+                  </div>
+                </div>
+              </div>
+
+              <div className="bg-neutral-800 rounded-lg border border-neutral-700 p-4">
+                <h3 className="text-lg font-bold mb-4">🎬 Story Arcs & Highlights</h3>
+                <div className="space-y-3">
+                  {[
+                    { time: '2h ago', title: 'Heated Debate', users: 'Alice vs Bob', messages: 47 },
+                    { time: '5h ago', title: 'Funny Joke Chain', users: '8 participants', messages: 23 },
+                    { time: '8h ago', title: 'Help Session', users: 'Charlie helped David', messages: 15 },
+                  ].map((arc, i) => (
+                    <div key={i} className="bg-neutral-700/50 p-3 rounded-lg">
+                      <div className="flex justify-between items-start">
+                        <div>
+                          <p className="font-semibold text-purple-300">{arc.title}</p>
+                          <p className="text-sm text-neutral-400">{arc.users} • {arc.messages} messages</p>
+                        </div>
+                        <div className="text-right">
+                          <p className="text-sm text-neutral-400">{arc.time}</p>
+                          <button className="mt-1 px-3 py-1 bg-purple-600 hover:bg-purple-700 rounded text-xs">Export</button>
+                        </div>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            </div>
+          )}
+
+          {/* NEW: Bot Personality Sculptor */}
+          {activeTab === 'personality' && (
+            <div>
+              <h2 className="text-3xl font-bold mb-4">🎨 Bot Personality Sculptor</h2>
+              <div className="bg-neutral-800 rounded-lg border border-neutral-700 p-6">
+                <h3 className="text-lg font-bold mb-6">Tune AI_Bot Behavior</h3>
+                <div className="space-y-6">
+                  {[
+                    { key: 'humor', label: 'Humor 🔥', color: 'red' },
+                    { key: 'spiciness', label: 'Spiciness 🌶', color: 'orange' },
+                    { key: 'empathy', label: 'Empathy 💗', color: 'pink' },
+                    { key: 'formality', label: 'Formality 📘', color: 'blue' },
+                    { key: 'mischief', label: 'Mischief 😈', color: 'purple' },
+                  ].map(slider => (
+                    <div key={slider.key}>
+                      <div className="flex justify-between mb-2">
+                        <label className="font-medium">{slider.label}</label>
+                        <span className="text-neutral-400">{Math.round(botPersonality[slider.key as keyof typeof botPersonality] * 100)}%</span>
+                      </div>
+                      <input 
+                        type="range" 
+                        min="0" 
+                        max="1" 
+                        step="0.1"
+                        value={botPersonality[slider.key as keyof typeof botPersonality]}
+                        onChange={(e) => setBotPersonality({...botPersonality, [slider.key]: parseFloat(e.target.value)})}
+                        className="w-full"
+                      />
+                    </div>
+                  ))}
+                </div>
+
+                <div className="mt-6 pt-6 border-t border-neutral-700">
+                  <h4 className="font-bold mb-3">Preset Personalities</h4>
+                  <div className="grid grid-cols-2 gap-3">
+                    {[
+                      { name: 'Chaotic Genie', desc: 'High humor, high mischief' },
+                      { name: 'Therapist', desc: 'High empathy, high formality' },
+                      { name: 'Hype Speaker', desc: 'Max humor, low formality' },
+                      { name: 'Sassy Gremlin', desc: 'High spice, high mischief' },
+                    ].map(preset => (
+                      <button key={preset.name} className="px-4 py-3 bg-neutral-700 hover:bg-green-600/30 border border-neutral-600 rounded-lg text-left">
+                        <p className="font-semibold">{preset.name}</p>
+                        <p className="text-xs text-neutral-400">{preset.desc}</p>
+                      </button>
+                    ))}
+                  </div>
+                </div>
+
+                <button className="mt-6 w-full px-4 py-3 bg-green-600 hover:bg-green-700 rounded-lg font-bold">
+                  Apply Changes
+                </button>
+              </div>
+            </div>
+          )}
+
         </main>
       </div>
     </div>

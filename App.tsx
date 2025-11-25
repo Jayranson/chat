@@ -1482,7 +1482,7 @@ function ChatApp({ socket, initialUser, initialRoom, onExit, onViewProfile, onWh
   const fetchRoomRecap = async () => {
     setLoadingRecap(true);
     try {
-      const response = await fetch(`http://localhost:3001/api/room/${currentRoom.name}/summary`);
+      const response = await fetch(`http://localhost:4000/api/room/${currentRoom.name}/summary`);
       if (response.ok) {
         const data = await response.json();
         setRoomSummary(data.text || 'No recent activity in this room.');

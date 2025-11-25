@@ -1066,26 +1066,19 @@ const detectToxicity = (text, roomName = null) => {
   const safetyMultiplier = roomSettings?.toxicityMultiplier || 1.0;
   const allowProfanity = roomSettings?.allowProfanity || false;
   
-  // In permissive rooms, skip toxicity check for mild content
-  if (allowProfanity && safetyMultiplier < 1.0) {
-    // Only check severe patterns in permissive rooms
-    for (const pattern of toxicPatterns.severe) {
-      if (pattern.test(text)) {
-        results.level = 'severe';
-        results.patterns.push('offensive language');
-        break;
-      }
-    }
-    return results; // Skip moderate checks
-  }
-  
-  // Check severe patterns
+  // Check severe patterns (always checked regardless of room settings)
   for (const pattern of toxicPatterns.severe) {
     if (pattern.test(text)) {
       results.level = 'severe';
       results.patterns.push('offensive language');
       break;
     }
+  }
+  
+  // In permissive rooms with profanity allowed, skip moderate checks
+  // This allows casual language while still blocking severe violations
+  if (allowProfanity && safetyMultiplier < 1.0) {
+    return results; // Early return - only severe patterns were checked
   }
   
   // Check moderate patterns (adjusted by safety multiplier)

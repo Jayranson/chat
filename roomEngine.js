@@ -2,7 +2,7 @@
 // Room configuration and management system with mood, safety modes, and AI summarization
 
 // In-memory config store
-export const ROOM_MOODS = ['chill', 'chaotic', 'supportive', 'serious', 'comedy'];
+export const ROOM_MOODS = ['chill', 'chaotic', 'supportive', 'serious', 'comedy', 'balanced'];
 
 export const ROOM_SAFETY_MODES = [
   'anything_goes',   // 18+

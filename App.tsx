@@ -158,6 +158,13 @@ const IconBot = () => (
   <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
     <rect x="3" y="11" width="18" height="10" rx="2"></rect>
     <path d="M12 7V11"></path><path d="M8 5 12 7l4-2"></path><path d="M8 11h8"></path>
+  </svg>
+);
+const IconActivity = () => (
+  <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+    <polyline points="22 12 18 12 15 21 9 3 6 12 2 12"></polyline>
+  </svg>
+);
     <path d="M7 16.01L7.01 15.99"></path><path d="M17 16.01L17.01 15.99"></path>
   </svg>
 );

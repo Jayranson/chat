@@ -1760,7 +1760,7 @@ io.on("connection", (socket) => {
     }
 
     // Check for AI interaction in public rooms AND DMs with AI_Bot
-    const isAIBotDM = roomMeta.type === 'dm' && roomMeta.participants?.some(p => p.id === 'ai-bot-id');
+    const isAIBotDM = roomMeta.type === 'dm' && roomMeta.participants && roomMeta.participants.some(p => p.id === 'ai-bot-id');
     
     if (roomMeta.type !== 'dm' || isAIBotDM) {
       let isAICall = false;
@@ -1908,7 +1908,8 @@ io.on("connection", (socket) => {
     const targetSocketId = isAIBot ? null : getSocketIdByUserId(targetUserId);
     const targetUser = targetSocketId ? onlineUsers[targetSocketId] : null;
     
-    if (!user.settings.enableWhispers && !isAIBot) return; 
+    // Allow DMs with AI_Bot even if whispers are disabled (AI is always accessible)
+    if (!isAIBot && !user.settings.enableWhispers) return;
     if (targetUser && !targetUser.settings.enableWhispers) {
       return;
     }

@@ -121,6 +121,14 @@ const aiLearnings = new Map(); // Store autonomous learnings
 const aiConversations = new Map(); // Track recent AI conversations per room for follow-up detection
 const lastThoughtTime = new Map(); // Track when thoughts were last shared per room
 
+// QA Memory System - Stop words for better question matching
+const STOP_WORDS = new Set([
+  'the','is','at','which','on','a','an','and','or','but','in','with','to','for','of','as','by',
+  'that','this','it','from','be','are','was','were','been','have','has','had','do','does','did',
+  'will','would','could','should','may','might','can','what','who','where','when','why','how',
+  'not','no','yes','you','your','yours','i','im','me','my','we','our','us'
+]);
+
 // Follow-up conversation detection
 const FOLLOWUP_WINDOW_MS = 2 * 60 * 1000; // 2 minutes
 
@@ -168,6 +176,68 @@ const shouldRouteToAIWithoutTag = (socket, roomName, text) => {
   if (!looksLikeFollowup(text)) return false;
 
   return true;
+};
+
+// QA Memory System - Helper Functions
+const getQAMemoryKey = (roomName) => `${roomName}:faqQA`;
+
+const storeQA = (question, answer, roomName, intent) => {
+  if (intent !== 'question') return;
+
+  const key = getQAMemoryKey(roomName);
+  if (!aiMemory.has(key)) {
+    aiMemory.set(key, []);
+  }
+
+  const list = aiMemory.get(key);
+  list.push({
+    question,
+    answer,
+    timestamp: Date.now(),
+  });
+
+  // Keep it bounded
+  if (list.length > 50) list.shift();
+};
+
+const normalizeText = (txt) => txt
+  .toLowerCase()
+  .replace(/[^\w\s]/g, '')
+  .split(/\s+/)
+  .filter(w => w.length > 2 && !STOP_WORDS.has(w));
+
+const questionSimilarity = (q1, q2) => {
+  const a = new Set(normalizeText(q1));
+  const b = new Set(normalizeText(q2));
+
+  if (!a.size || !b.size) return 0;
+
+  let intersect = 0;
+  for (const w of a) {
+    if (b.has(w)) intersect++;
+  }
+
+  const union = new Set([...a, ...b]).size;
+  return intersect / union;
+};
+
+const findSimilarAnswer = (question, roomName, threshold = 0.45) => {
+  const key = getQAMemoryKey(roomName);
+  const list = aiMemory.get(key) || [];
+  if (!list.length) return null;
+
+  let best = null;
+  let bestScore = 0;
+
+  for (const item of list) {
+    const score = questionSimilarity(question, item.question);
+    if (score > bestScore && score >= threshold) {
+      bestScore = score;
+      best = item;
+    }
+  }
+
+  return best ? best.answer : null;
 };
 
 const botKnowledge = {
@@ -514,6 +584,17 @@ const generateResponse = (text, intent, sentiment, entities, roomName) => {
   // Learn from this interaction
   learnFromInteraction(text, intent, sentiment, roomName);
   
+  // For questions, check if we have a similar answer in memory first
+  if (intent === 'question') {
+    const cachedAnswer = findSimilarAnswer(text, roomName);
+    if (cachedAnswer) {
+      // We found a similar question - return the cached answer
+      history.push({ text, intent, sentiment, timestamp: Date.now() });
+      if (history.length > AI_CONFIG.CONVERSATION_HISTORY_LIMIT) history.shift();
+      return cachedAnswer;
+    }
+  }
+  
   // Handle different intents
   switch (intent) {
     case 'greeting':
@@ -596,7 +677,14 @@ const generateResponse = (text, intent, sentiment, entities, roomName) => {
   history.push({ text, intent, sentiment, timestamp: Date.now() });
   if (history.length > AI_CONFIG.CONVERSATION_HISTORY_LIMIT) history.shift();
   
-  return responses.length > 0 ? responses.join(' ') : getDefaultResponse(sentiment, personality);
+  const finalResponse = responses.length > 0 ? responses.join(' ') : getDefaultResponse(sentiment, personality);
+  
+  // Store question-answer pair in QA memory for future reference
+  if (intent === 'question') {
+    storeQA(text, finalResponse, roomName, intent);
+  }
+  
+  return finalResponse;
 };
 
 // Handle questions with personality
@@ -662,15 +750,9 @@ const handleQuestion = (text, entities, history, personality) => {
     responses.push("This is Wibali, a real-time chat platform with intelligent AI moderation. It uses WebSocket technology for instant messaging, and I'm here to help keep conversations friendly and engaging!");
   }
   
-  // Unknown question - check history for similar questions
+  // Unknown question - use QA memory or fallback
   else {
-    const similarQuestion = history.find(h => h.intent === 'question' && h.text.includes(lower.split(' ')[0]));
-    
-    if (similarQuestion) {
-      responses.push("That sounds similar to what you asked earlier. Could you provide more details or ask in a different way?");
-    } else {
-      responses.push("That's an interesting question! While I may not have all the answers, I can help with chat-related questions, rules, and general assistance. Could you rephrase or ask something else?");
-    }
+    responses.push("That's an interesting question! While I may not have all the answers, I can help with chat-related questions, rules, and general assistance. Could you rephrase or ask something else?");
   }
   
   return responses;

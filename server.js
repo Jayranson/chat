@@ -2,6 +2,7 @@ import express from "express";
 import http from "http";
 import { Server } from "socket.io";
 import cors from "cors";
+import * as RoomEngine from "./roomEngine.js";
 
 const app = express();
 const server = http.createServer(app);
@@ -572,14 +573,25 @@ const shareThought = (roomName) => {
 const generateResponse = (text, intent, sentiment, entities, roomName) => {
   const responses = [];
   
+  // Get room settings (includes mood and safety adjustments)
+  const roomSettings = RoomEngine.getRoomSettings(roomName);
+  
   // Get or create conversation history for this room
   if (!conversationHistory.has(roomName)) {
     conversationHistory.set(roomName, []);
   }
   const history = conversationHistory.get(roomName);
   
-  // Get adaptive personality for this room
+  // Get adaptive personality for this room, influenced by room mood
   const personality = getRoomPersonality(roomName);
+  
+  // Apply room mood to personality
+  if (roomSettings.aiHumorLevel !== undefined) {
+    personality.humor = (personality.humor + roomSettings.aiHumorLevel) / 2;
+  }
+  if (roomSettings.aiFormality !== undefined) {
+    personality.formality = (personality.formality + roomSettings.aiFormality) / 2;
+  }
   
   // Learn from this interaction
   learnFromInteraction(text, intent, sentiment, roomName);
@@ -1046,8 +1058,26 @@ const toxicPatterns = {
   ]
 };
 
-const detectToxicity = (text) => {
+const detectToxicity = (text, roomName = null) => {
   const results = { level: 'clean', patterns: [] };
+  
+  // Get room settings for safety adjustments
+  const roomSettings = roomName ? RoomEngine.getRoomSettings(roomName) : null;
+  const safetyMultiplier = roomSettings?.toxicityMultiplier || 1.0;
+  const allowProfanity = roomSettings?.allowProfanity || false;
+  
+  // In permissive rooms, skip toxicity check for mild content
+  if (allowProfanity && safetyMultiplier < 1.0) {
+    // Only check severe patterns in permissive rooms
+    for (const pattern of toxicPatterns.severe) {
+      if (pattern.test(text)) {
+        results.level = 'severe';
+        results.patterns.push('offensive language');
+        break;
+      }
+    }
+    return results; // Skip moderate checks
+  }
   
   // Check severe patterns
   for (const pattern of toxicPatterns.severe) {
@@ -1058,11 +1088,12 @@ const detectToxicity = (text) => {
     }
   }
   
-  // Check moderate patterns
+  // Check moderate patterns (adjusted by safety multiplier)
   if (results.level === 'clean') {
     for (const pattern of toxicPatterns.moderate) {
       if (pattern.test(text)) {
-        results.level = 'moderate';
+        // In stricter rooms (multiplier > 1), treat moderate as more serious
+        results.level = safetyMultiplier > 1.3 ? 'severe' : 'moderate';
         results.patterns.push('potentially offensive');
         break;
       }
@@ -1338,6 +1369,95 @@ app.post("/submit-ticket", (req, res) => {
   }
 });
 
+// --- Room Engine API Routes ---
+
+// Get room configuration
+app.get("/api/room/:roomName/config", (req, res) => {
+  try {
+    const { roomName } = req.params;
+    const config = RoomEngine.getRoomConfig(roomName);
+    res.json(config);
+  } catch (error) {
+    console.error("Error getting room config:", error);
+    res.status(500).send("Server error.");
+  }
+});
+
+// Update room configuration (admin only - validate on client)
+app.post("/api/room/:roomName/config", (req, res) => {
+  try {
+    const { roomName } = req.params;
+    const updates = req.body;
+    
+    // Validate mood and safety mode
+    if (updates.mood && !RoomEngine.ROOM_MOODS.includes(updates.mood)) {
+      return res.status(400).send("Invalid mood value.");
+    }
+    if (updates.safetyMode && !RoomEngine.ROOM_SAFETY_MODES.includes(updates.safetyMode)) {
+      return res.status(400).send("Invalid safety mode value.");
+    }
+    
+    const updated = RoomEngine.updateRoomConfig(roomName, updates);
+    res.json(updated);
+  } catch (error) {
+    console.error("Error updating room config:", error);
+    res.status(500).send("Server error.");
+  }
+});
+
+// Get room summary
+app.get("/api/room/:roomName/summary", (req, res) => {
+  try {
+    const { roomName } = req.params;
+    const messages = messagesByRoom[roomName] || [];
+    const summary = RoomEngine.getRoomSummary(roomName, messages);
+    res.json(summary);
+  } catch (error) {
+    console.error("Error getting room summary:", error);
+    res.status(500).send("Server error.");
+  }
+});
+
+// Get room episodes (notable events)
+app.get("/api/room/:roomName/episodes", (req, res) => {
+  try {
+    const { roomName } = req.params;
+    const limit = parseInt(req.query.limit) || 10;
+    const episodes = RoomEngine.getRoomEpisodes(roomName, limit);
+    res.json(episodes);
+  } catch (error) {
+    console.error("Error getting room episodes:", error);
+    res.status(500).send("Server error.");
+  }
+});
+
+// Get room settings (combined config + mood + safety adjustments)
+app.get("/api/room/:roomName/settings", (req, res) => {
+  try {
+    const { roomName } = req.params;
+    const settings = RoomEngine.getRoomSettings(roomName);
+    res.json(settings);
+  } catch (error) {
+    console.error("Error getting room settings:", error);
+    res.status(500).send("Server error.");
+  }
+});
+
+// Get room activity analytics
+app.get("/api/room/:roomName/analytics", (req, res) => {
+  try {
+    const { roomName } = req.params;
+    const messages = messagesByRoom[roomName] || [];
+    const analytics = RoomEngine.analyzeRoomActivity(roomName, messages);
+    res.json(analytics);
+  } catch (error) {
+    console.error("Error getting room analytics:", error);
+    res.status(500).send("Server error.");
+  }
+});
+
+// --- End Room Engine API Routes ---
+
 
 // --- MODIFIED: Socket.IO Authentication Middleware ---
 io.use((socket, next) => {
@@ -1564,8 +1684,8 @@ io.on("connection", (socket) => {
       return socket.emit("message limit reached");
     }
 
-    // AI-powered moderation: Check for toxicity
-    const toxicityCheck = detectToxicity(text);
+    // AI-powered moderation: Check for toxicity (with room-specific settings)
+    const toxicityCheck = detectToxicity(text, roomName);
     
     // Track user behavior
     const lastBehavior = userBehaviorTracking.get(user.id);
@@ -1578,10 +1698,21 @@ io.on("connection", (socket) => {
     
     // AI moderation response for non-admins
     if (user.role !== 'admin' && roomMeta.type !== 'dm') {
+      // Get room-specific auto-block threshold
+      const roomSettings = RoomEngine.getRoomSettings(roomName);
+      const autoBlockThreshold = roomSettings?.autoBlockThreshold || 5;
+      
       // Severe toxicity - block message and warn user
       if (toxicityCheck.level === 'severe') {
         sendSystemMessageToSocket(socket.id, roomName, 
           "⚠️ AI_Bot: Your message was blocked due to offensive language. Please keep the chat respectful.");
+        
+        // Log episode
+        RoomEngine.addRoomEpisode(roomName, `User ${user.username} sent blocked toxic message`, {
+          user: user.username,
+          action: 'message_blocked',
+          reason: 'severe_toxicity'
+        });
         
         // Notify admins about the incident
         const suggestions = generateModSuggestion(behavior, user.username);
@@ -1603,8 +1734,8 @@ io.on("connection", (socket) => {
           "⚠️ AI_Bot: Please be mindful of your language and posting frequency. Continued violations may result in moderation.");
       }
       
-      // High toxicity score - notify admins
-      if (behavior.toxicityScore >= 5) {
+      // High toxicity score - notify admins (use room-specific threshold)
+      if (behavior.toxicityScore >= autoBlockThreshold) {
         const suggestions = generateModSuggestion(behavior, user.username);
         Object.values(onlineUsers).forEach(onlineUser => {
           if (onlineUser.role === 'admin') {

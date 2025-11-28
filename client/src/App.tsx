@@ -1,6 +1,7 @@
 import React, { useEffect, useState, useRef, type ChangeEvent } from "react";
 import { io, Socket } from "socket.io-client";
 import AgeVerification from "./AgeVerification";
+import ChatRPG from "./ChatRPG";
 
 // --- Server Configuration ---
 // Automatically detect server URL based on environment
@@ -1500,6 +1501,10 @@ function ChatApp({ socket, initialUser, initialRoom, onExit, onViewProfile, onWh
 
   const [unreadCountsByUser, setUnreadCountsByUser] = useState<Record<string, number>>({});
 
+  // NEW: State for ChatRPG game
+  const [showGame, setShowGame] = useState(false);
+  const [gameMinimized, setGameMinimized] = useState(false);
+
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const typingTimeout = useRef<ReturnType<typeof setTimeout> | null>(null);
   const audioCtx = useRef<AudioContext | null>(null);
@@ -1821,6 +1826,15 @@ function ChatApp({ socket, initialUser, initialRoom, onExit, onViewProfile, onWh
                 )}
               </div>
 
+              {/* Game Toggle Button */}
+              <button
+                onClick={() => setShowGame(!showGame)}
+                className={`px-3 py-1 rounded-md text-white transition-colors ${showGame ? 'bg-purple-600 hover:bg-purple-700' : 'bg-neutral-700 hover:bg-neutral-600'}`}
+                title="Toggle ChatRPG Game"
+              >
+                🎮 Game
+              </button>
+
               <h2 className="text-2xl font-bold flex items-center gap-2">{isRoomLocked && <span title="Room is Locked">🔒</span>}{currentChatName}</h2>
             </div>
             {currentUser.role === 'admin' && currentRoom.type === 'judgement' && (<button onClick={handleReleaseUser} className="px-4 py-1 bg-green-600 text-white rounded-md hover:bg-green-700 font-semibold">Release User</button>)}
@@ -1921,6 +1935,22 @@ function ChatApp({ socket, initialUser, initialRoom, onExit, onViewProfile, onWh
             </div>
           </div>
         </div>
+
+        {/* ChatRPG Game Panel - positioned to the right of chat */}
+        {showGame && (
+          <div className="flex-shrink-0">
+            <ChatRPG
+              socket={socket}
+              username={currentUser.username}
+              userId={currentUser.id}
+              roomName={currentRoom.name}
+              isOpen={showGame}
+              onClose={() => setShowGame(false)}
+              onToggleSize={() => setGameMinimized(!gameMinimized)}
+              isMinimized={gameMinimized}
+            />
+          </div>
+        )}
       </div>
     </div>
   );

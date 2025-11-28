@@ -1,6 +1,6 @@
 # Wibali Chat Network
 
-A full-stack real-time chat application with user authentication, AI-powered moderation, age verification for UK compliance, and advanced admin features.
+A full-stack real-time chat application with user authentication, AI-powered moderation, age verification for UK compliance, embedded RPG game, and advanced admin features.
 
 ## Features
 
@@ -8,8 +8,19 @@ A full-stack real-time chat application with user authentication, AI-powered mod
 - **User Authentication**: Login/Register with password protection
 - **Real-time Messaging**: WebSocket communication using Socket.IO
 - **Typing Indicators**: See when other users are typing
-- **Direct Messages (Whispers)**: Private messaging between users
+- **Direct Messages (Whispers)**: Private messaging between users with pulsating notifications
 - **Room/Channel Support**: Create and join public chat rooms
+
+### ChatRPG - Embedded Game 🎮
+An embedded Runescape-style RPG game within chat rooms:
+- **Character Creation**: Customize your avatar with skin tones, hair styles, outfits
+- **Persistent Progress**: Character stats saved per user account
+- **Skills System**: Attack, Defense, Mining, Fishing, Woodcutting, Crafting, Cooking
+- **Multiplayer**: See other players in the same room in real-time
+- **Resource Gathering**: Chop trees, mine ore, catch fish to level up
+- **Gold Economy**: Earn gold from activities
+- **Network-wide Progress**: Your character travels with you across all rooms
+- **Keyboard Controls**: WASD/Arrow keys to move, click to interact
 
 ### AI-Powered Features
 - **AI Moderation Bot**: Intelligent moderation with toxicity detection
@@ -20,6 +31,7 @@ A full-stack real-time chat application with user authentication, AI-powered mod
 ### Age Verification (UK Compliance)
 - **Face Detection**: Client-side face detection using face-api.js
 - **Age Estimation**: AI-powered age estimation
+- **QR Code Mobile Verification**: For users without webcam
 - **Privacy-First**: No facial data stored or transmitted
 - **Compliant**: Meets UK Online Safety Act requirements
 
@@ -43,16 +55,19 @@ A full-stack real-time chat application with user authentication, AI-powered mod
 - Tailwind CSS for styling
 - Socket.IO client
 - face-api.js for age verification
+- qrcode.react for QR code generation
 
 ## Project Structure
 
 ```
-├── server.js              # Backend server (Express + Socket.IO)
+├── server.js              # Backend server (Express + Socket.IO + RPG events)
 ├── roomEngine.js          # Room configuration and analytics
 ├── client/                # Frontend React app
 │   ├── src/
 │   │   ├── App.tsx       # Main application component
+│   │   ├── ChatRPG.tsx   # Embedded RPG game component
 │   │   ├── AgeVerification.tsx  # Age verification component
+│   │   ├── MobileAgeVerification.tsx  # Mobile verification page
 │   │   └── main.tsx      # Entry point
 │   └── package.json
 ├── uploads/              # File upload storage
@@ -65,21 +80,46 @@ A full-stack real-time chat application with user authentication, AI-powered mod
 - npm or yarn
 - Modern browser with webcam (for age verification)
 
-## Installation
+## Clean Install Instructions
 
-1. Clone the repository:
+### Option 1: Clone the PR branch directly
+
 ```bash
-git clone https://github.com/Jayranson/chat.git
+# Clone with the PR branch
+git clone -b copilot/make-chat-application-functional https://github.com/Jayranson/chat.git
 cd chat
-```
 
-2. Install dependencies:
-```bash
-# Install root dependencies
+# Install root dependencies (server)
 npm install
 
 # Install client dependencies
+cd client
+npm install
+cd ..
+
+# Build the client for production
+npm run build
+
+# Start the server
+npm start
+```
+
+The application will be available at `http://localhost:4000`
+
+### Option 2: If you already cloned, switch to the PR branch
+
+```bash
+cd chat
+git fetch origin
+git checkout copilot/make-chat-application-functional
+
+# Install dependencies
+npm install
 cd client && npm install && cd ..
+
+# Build and run
+npm run build
+npm start
 ```
 
 ## Running the Application
@@ -118,6 +158,7 @@ npm start
 ```env
 PORT=4000
 ALLOWED_ORIGINS=http://localhost:3000,http://localhost:5173
+VITE_FACE_API_MODEL_URL=https://cdn.jsdelivr.net/npm/@vladmandic/face-api@1.7.13/model
 ```
 
 ## Age Verification
@@ -137,6 +178,8 @@ For users without a webcam on their PC/laptop:
 3. Complete face verification on your mobile device
 4. Desktop automatically progresses once mobile verification is complete
 
+**Note**: Mobile QR verification only works when deployed to a public URL (not localhost).
+
 The QR code flow uses a session-based system:
 - Sessions expire after 10 minutes
 - Desktop polls server for verification status
@@ -145,6 +188,17 @@ The QR code flow uses a session-based system:
 To skip age verification (for testing):
 - Click "Skip verification" on the age verification page
 - Set `localStorage.setItem('ageVerified', 'true')` in browser console
+
+## ChatRPG Game
+
+The embedded game appears in chat rooms when you click the "🎮 Game" button:
+
+1. **First Time**: Create your character with custom appearance
+2. **Move**: Use WASD or arrow keys to navigate the world
+3. **Gather Resources**: Walk near trees, ore, or fishing spots and click them
+4. **Level Up**: Gain XP and gold from gathering activities
+5. **Multiplayer**: See other players in the same room in real-time
+6. **Persistent**: Your character saves automatically
 
 ## Default Accounts
 

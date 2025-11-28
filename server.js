@@ -89,6 +89,9 @@ const bannedUserIds = new Set();
 // NEW: State for Reports and Tickets
 const reports = [];
 const supportTickets = [];
+
+// ChatRPG player data per room
+const rpgPlayers = {}; // { roomName: { playerId: characterData } }
 // --- End Server State ---
 
 
@@ -3105,6 +3108,79 @@ io.on("connection", (socket) => {
     }
   });
 
+  // --- ChatRPG Socket Events ---
+  socket.on("rpg:join", ({ roomName, character }) => {
+    const user = onlineUsers[socket.id];
+    if (!user || !character) return;
+
+    // Initialize room if needed
+    if (!rpgPlayers[roomName]) {
+      rpgPlayers[roomName] = {};
+    }
+
+    // Save character data
+    rpgPlayers[roomName][user.id] = character;
+
+    // Broadcast player list to room
+    const players = Object.values(rpgPlayers[roomName]);
+    io.to(roomName).emit("rpg:players", players);
+
+    console.log(`[RPG] ${user.username} joined game in ${roomName}`);
+  });
+
+  socket.on("rpg:move", ({ roomName, x, y, direction }) => {
+    const user = onlineUsers[socket.id];
+    if (!user || !rpgPlayers[roomName]?.[user.id]) return;
+
+    const userId = user.id;
+    const roomRef = roomName;
+
+    // Update position
+    rpgPlayers[roomName][user.id].x = x;
+    rpgPlayers[roomName][user.id].y = y;
+    rpgPlayers[roomName][user.id].direction = direction;
+    rpgPlayers[roomName][user.id].isMoving = true;
+
+    // Broadcast update to room
+    const players = Object.values(rpgPlayers[roomName]);
+    io.to(roomName).emit("rpg:players", players);
+
+    // Reset moving flag after delay with null safety check
+    setTimeout(() => {
+      if (rpgPlayers[roomRef] && rpgPlayers[roomRef][userId]) {
+        rpgPlayers[roomRef][userId].isMoving = false;
+      }
+    }, 200);
+  });
+
+  socket.on("rpg:action", ({ roomName, action, result }) => {
+    const user = onlineUsers[socket.id];
+    if (!user) return;
+
+    // Broadcast action to other players
+    socket.to(roomName).emit("rpg:action", {
+      playerId: user.id,
+      action,
+      result
+    });
+  });
+
+  socket.on("rpg:leave", ({ roomName }) => {
+    const user = onlineUsers[socket.id];
+    if (!user) return;
+
+    // Remove player from room
+    if (rpgPlayers[roomName]?.[user.id]) {
+      delete rpgPlayers[roomName][user.id];
+
+      // Broadcast updated player list
+      const players = Object.values(rpgPlayers[roomName]);
+      io.to(roomName).emit("rpg:players", players);
+
+      console.log(`[RPG] ${user.username} left game in ${roomName}`);
+    }
+  });
+
   socket.on("disconnect", () => {
     const user = onlineUsers[socket.id];
     if (user) {
@@ -3113,6 +3189,17 @@ io.on("connection", (socket) => {
         userAccounts[user.id].settings = user.settings;
         userAccounts[user.id].hiddenDMs = user.hiddenDMs;
       }
+      
+      // Clean up RPG player data
+      for (const roomName of Object.keys(rpgPlayers)) {
+        if (rpgPlayers[roomName] && rpgPlayers[roomName][user.id]) {
+          delete rpgPlayers[roomName][user.id];
+          // Broadcast updated player list
+          const players = Object.values(rpgPlayers[roomName]);
+          io.to(roomName).emit("rpg:players", players);
+        }
+      }
+      
       leaveMainRoom(socket); // Use leaveMainRoom
       delete onlineUsers[socket.id];
       // Notify admins of status change

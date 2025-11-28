@@ -1,6 +1,25 @@
 import React, { useEffect, useState, useRef, ChangeEvent } from "react";
 import { io, Socket } from "socket.io-client";
 
+// --- Server Configuration ---
+// Automatically detect server URL based on environment
+// In production (deployed), use the current host
+// In development, use localhost:4000
+const getServerUrl = (): string => {
+  // If running in browser and not on localhost, use current origin
+  if (typeof window !== 'undefined') {
+    const { hostname, port, protocol } = window.location;
+    // Check if we're on the production server
+    if (hostname !== 'localhost' && hostname !== '127.0.0.1') {
+      return `${protocol}//${hostname}${port ? ':' + port : ''}`;
+    }
+  }
+  // Default to localhost for development
+  return "http://localhost:4000";
+};
+
+const API_URL = getServerUrl();
+
 // --- Type Definitions ---
 type Message = {
   id: string; user: string; text: string; time: string;
@@ -592,7 +611,7 @@ const BannedModal = ({ username, onClose }: BannedModalProps) => {
     if (!message.trim() || status === 'submitting' || status === 'submitted') return;
     setStatus('submitting');
     try {
-      const response = await fetch("http://localhost:4000/submit-ticket", {
+      const response = await fetch(`${API_URL}/submit-ticket`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ username, message }),
@@ -680,8 +699,7 @@ const AuthPage = ({ onAuthSuccess }: AuthPageProps) => {
   const [showBannedModal, setShowBannedModal] = useState(false);
 
   const connectSocket = (authData: object, callback: (err: Error | null, socket?: Socket, user?: UserAccount) => void) => {
-    const SERVER_URL = "http://localhost:4000";
-    const socket = io(SERVER_URL, { auth: authData, withCredentials: true });
+    const socket = io(API_URL, { auth: authData, withCredentials: true });
 
     socket.on("connect", () => {
       socket.on("self details", (user: UserAccount) => {
@@ -1482,7 +1500,7 @@ function ChatApp({ socket, initialUser, initialRoom, onExit, onViewProfile, onWh
   const fetchRoomRecap = async () => {
     setLoadingRecap(true);
     try {
-      const response = await fetch(`http://localhost:4000/api/room/${currentRoom.name}/summary`);
+      const response = await fetch(`${API_URL}/api/room/${currentRoom.name}/summary`);
       if (response.ok) {
         const data = await response.json();
         setRoomSummary(data.text || 'No recent activity in this room.');

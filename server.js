@@ -2,24 +2,44 @@ import express from "express";
 import http from "http";
 import { Server } from "socket.io";
 import cors from "cors";
+import path from "path";
+import { fileURLToPath } from "url";
 import * as RoomEngine from "./roomEngine.js";
+
+// ES module __dirname equivalent
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
 
 const app = express();
 const server = http.createServer(app);
 
+// Production server URL (configurable via environment variable)
+const SERVER_URL = process.env.SERVER_URL || "http://100.115.92.204:4000";
+
 const corsOptions = {
-  origin: ["http://localhost:3000", "http://localhost:5173", "http://localhost:5174"],
+  origin: [
+    "http://localhost:3000", 
+    "http://localhost:5173", 
+    "http://localhost:5174",
+    "http://100.115.92.204:4000",
+    "http://100.115.92.204",
+    SERVER_URL
+  ],
   methods: ["GET", "POST"],
   credentials: true
 };
 
 const io = new Server(server, { cors: corsOptions });
 
-// NEW: Added express.json() middleware to parse POST bodies
+// Middleware
 app.use(cors(corsOptions));
-app.use(express.json()); 
+app.use(express.json());
 
-app.get("/", (req, res) => res.send("ChatNet server is running 🚀"));
+// Serve static files from React build (production)
+app.use(express.static(path.join(__dirname, "client/dist")));
+
+// API routes will be handled before the catch-all
+// The catch-all for React SPA routing is at the end of the file
 
 // --- Server State ---
 const userAccounts = {
@@ -1001,38 +1021,324 @@ const getDefaultResponse = (sentiment, personality) => {
   return response;
 };
 
-// Admin command handler for AI
-const handleAdminCommand = (inputText, roomName, admin) => {
+// Track admin's last known room for DM command context
+const adminRoomContext = new Map(); // adminId -> { roomName, timestamp }
+
+// Update admin room context when they view a room
+const updateAdminRoomContext = (adminId, roomName) => {
+  if (roomName && roomName !== 'dm') {
+    adminRoomContext.set(adminId, {
+      roomName,
+      timestamp: Date.now()
+    });
+  }
+};
+
+// Get admin's current room context for DM commands
+const getAdminRoomContext = (adminId) => {
+  const context = adminRoomContext.get(adminId);
+  if (!context) return null;
+  // Context expires after 30 minutes
+  if (Date.now() - context.timestamp > 30 * 60 * 1000) {
+    adminRoomContext.delete(adminId);
+    return null;
+  }
+  return context.roomName;
+};
+
+// Find user by username (case-insensitive)
+const findUserByUsername = (username) => {
+  const lowerUsername = username.toLowerCase().trim();
+  // Check online users first
+  for (const [socketId, user] of Object.entries(onlineUsers)) {
+    if (user.username.toLowerCase() === lowerUsername) {
+      return { ...user, socketId };
+    }
+  }
+  // Check user accounts
+  for (const [id, account] of Object.entries(userAccounts)) {
+    if (account.username.toLowerCase() === lowerUsername) {
+      return { ...account, id };
+    }
+  }
+  return null;
+};
+
+// Extract username from command text
+const extractUsernameFromCommand = (text, commandWord) => {
+  const patterns = [
+    new RegExp(`${commandWord}\\s+(?:user\\s+)?["']?([\\w_]+)["']?`, 'i'),
+    new RegExp(`${commandWord}\\s+@?([\\w_]+)`, 'i'),
+    new RegExp(`@([\\w_]+).*${commandWord}`, 'i'),
+    new RegExp(`([\\w_]+).*${commandWord}`, 'i')
+  ];
+  
+  for (const pattern of patterns) {
+    const match = text.match(pattern);
+    if (match && match[1]) {
+      const name = match[1].toLowerCase();
+      // Filter out common words
+      if (!['me', 'myself', 'user', 'the', 'a', 'from', 'room', 'please', 'now'].includes(name)) {
+        return match[1];
+      }
+    }
+  }
+  return null;
+};
+
+// Admin command handler for AI - FULL EXECUTION VERSION
+const handleAdminCommand = (inputText, dmRoomName, admin, adminSocket) => {
   const lower = inputText.toLowerCase().trim();
   
-  // Kick command
+  // Get admin's context room (the room they were last in)
+  const contextRoom = getAdminRoomContext(admin.id) || 'general';
+  const roomMeta = rooms[contextRoom];
+  
+  // Self-action protection
   if (lower.includes('kick') && (lower.includes('me') || lower.includes('myself'))) {
-    return "I understand you're an administrator, but I cannot kick you from a private conversation with me. If you'd like to leave this DM, you can simply close the chat window. Is there something else I can help you with?";
+    return "I understand you're an administrator, but I cannot kick you. If you'd like to leave a room, you can simply use the Leave button. Is there something else I can help you with?";
   }
   
-  // Ban command (self)
   if (lower.includes('ban') && (lower.includes('me') || lower.includes('myself'))) {
-    return "As an administrator, I cannot ban you. You have full control over the platform. If you need to test moderation features, I recommend creating a test account. How else can I assist you?";
+    return "As an administrator, I cannot ban you. You have full control over the platform. If you need to test moderation features, I recommend creating a test account.";
   }
   
-  // Mute command (self)
   if (lower.includes('mute') && (lower.includes('me') || lower.includes('myself'))) {
-    return "I cannot mute an administrator. Your role grants you immunity from moderation actions. Is there something specific you'd like to test or configure?";
+    return "I cannot mute an administrator. Your role grants you immunity from moderation actions.";
+  }
+  
+  // === KICK COMMAND ===
+  if (lower.includes('kick') && !lower.includes('me') && !lower.includes('myself')) {
+    const targetUsername = extractUsernameFromCommand(inputText, 'kick');
+    if (!targetUsername) {
+      return `📋 **Kick Command**\n\nTo kick a user, say: "kick [username]"\n\nI'll remove them from **${contextRoom}**. Who would you like me to kick?`;
+    }
+    
+    const targetUser = findUserByUsername(targetUsername);
+    if (!targetUser) {
+      return `❌ I couldn't find a user named "${targetUsername}". Please check the spelling and try again.`;
+    }
+    
+    if (targetUser.role === 'admin') {
+      return `❌ I cannot kick **${targetUser.username}** because they are an administrator.`;
+    }
+    
+    // Execute kick
+    const targetSocketId = targetUser.socketId || getSocketIdByUserId(targetUser.id);
+    if (targetSocketId && onlineUsers[targetSocketId]) {
+      const targetSocket = io.sockets.sockets.get(targetSocketId);
+      if (targetSocket) {
+        targetSocket.leave(contextRoom);
+        onlineUsers[targetSocketId].mainRoom = null;
+        onlineUsers[targetSocketId].activeRoom = null;
+        createSystemMessage(contextRoom, `${targetUser.username} was kicked from the room by AI_Bot (on ${admin.username}'s order).`);
+        io.to(contextRoom).emit("user list", getUsersInRoom(contextRoom));
+        targetSocket.emit("kicked", { room: contextRoom, by: admin.username });
+        return `✅ Done! I've kicked **${targetUser.username}** from **${contextRoom}**.`;
+      }
+    }
+    return `⚠️ ${targetUser.username} is not currently in **${contextRoom}** or is offline.`;
+  }
+  
+  // === BAN COMMAND ===
+  if (lower.includes('ban') && !lower.includes('me') && !lower.includes('myself')) {
+    const targetUsername = extractUsernameFromCommand(inputText, 'ban');
+    if (!targetUsername) {
+      return `📋 **Ban Command**\n\nTo ban a user, say: "ban [username]"\n\nI'll ban them from the entire server. Who would you like me to ban?`;
+    }
+    
+    const targetUser = findUserByUsername(targetUsername);
+    if (!targetUser) {
+      return `❌ I couldn't find a user named "${targetUsername}". Please check the spelling and try again.`;
+    }
+    
+    if (targetUser.role === 'admin') {
+      return `❌ I cannot ban **${targetUser.username}** because they are an administrator.`;
+    }
+    
+    // Execute ban
+    bannedUserIds.add(targetUser.id);
+    const targetSocketId = targetUser.socketId || getSocketIdByUserId(targetUser.id);
+    if (targetSocketId) {
+      const targetSocket = io.sockets.sockets.get(targetSocketId);
+      if (targetSocket) {
+        targetSocket.emit("banned", { by: admin.username });
+        targetSocket.disconnect(true);
+      }
+    }
+    
+    // Announce in all rooms
+    Object.keys(rooms).forEach(roomName => {
+      if (rooms[roomName].type === 'public') {
+        createSystemMessage(roomName, `${targetUser.username} has been banned from the server by AI_Bot (on ${admin.username}'s order).`, 'server');
+      }
+    });
+    
+    return `✅ Done! I've banned **${targetUser.username}** from the server.`;
+  }
+  
+  // === MUTE/SPECTATE COMMAND ===
+  if ((lower.includes('mute') || lower.includes('spectate')) && !lower.includes('me') && !lower.includes('myself') && !lower.includes('unmute')) {
+    const commandWord = lower.includes('spectate') ? 'spectate' : 'mute';
+    const targetUsername = extractUsernameFromCommand(inputText, commandWord);
+    if (!targetUsername) {
+      return `📋 **Mute Command**\n\nTo mute a user, say: "mute [username]"\n\nI'll mute them in **${contextRoom}**. Who would you like me to mute?`;
+    }
+    
+    const targetUser = findUserByUsername(targetUsername);
+    if (!targetUser) {
+      return `❌ I couldn't find a user named "${targetUsername}". Please check the spelling and try again.`;
+    }
+    
+    if (targetUser.role === 'admin') {
+      return `❌ I cannot mute **${targetUser.username}** because they are an administrator.`;
+    }
+    
+    // Execute mute (spectate mode)
+    const targetSocketId = targetUser.socketId || getSocketIdByUserId(targetUser.id);
+    if (targetSocketId && onlineUsers[targetSocketId]) {
+      onlineUsers[targetSocketId].isSpectating = true;
+      const targetSocket = io.sockets.sockets.get(targetSocketId);
+      if (targetSocket) {
+        targetSocket.emit("self details", { ...onlineUsers[targetSocketId] });
+      }
+      io.to(contextRoom).emit("user list", getUsersInRoom(contextRoom));
+      createSystemMessage(contextRoom, `${targetUser.username} is now muted (spectating) by AI_Bot (on ${admin.username}'s order).`);
+      return `✅ Done! I've muted **${targetUser.username}** in **${contextRoom}**. They can read but not send messages.`;
+    }
+    return `⚠️ ${targetUser.username} is not currently online or in **${contextRoom}**.`;
+  }
+  
+  // === UNMUTE COMMAND ===
+  if (lower.includes('unmute')) {
+    const targetUsername = extractUsernameFromCommand(inputText, 'unmute');
+    if (!targetUsername) {
+      return `📋 **Unmute Command**\n\nTo unmute a user, say: "unmute [username]"\n\nWho would you like me to unmute?`;
+    }
+    
+    const targetUser = findUserByUsername(targetUsername);
+    if (!targetUser) {
+      return `❌ I couldn't find a user named "${targetUsername}". Please check the spelling and try again.`;
+    }
+    
+    const targetSocketId = targetUser.socketId || getSocketIdByUserId(targetUser.id);
+    if (targetSocketId && onlineUsers[targetSocketId]) {
+      onlineUsers[targetSocketId].isSpectating = false;
+      const targetSocket = io.sockets.sockets.get(targetSocketId);
+      if (targetSocket) {
+        targetSocket.emit("self details", { ...onlineUsers[targetSocketId] });
+      }
+      io.to(contextRoom).emit("user list", getUsersInRoom(contextRoom));
+      createSystemMessage(contextRoom, `${targetUser.username} has been unmuted by AI_Bot (on ${admin.username}'s order).`);
+      return `✅ Done! I've unmuted **${targetUser.username}**. They can now send messages again.`;
+    }
+    return `⚠️ ${targetUser.username} is not currently online.`;
+  }
+  
+  // === SET TOPIC COMMAND ===
+  if (lower.includes('topic') || lower.includes('set topic') || lower.includes('change topic')) {
+    const topicMatch = inputText.match(/(?:set\s+)?topic\s+(?:to\s+)?["']?(.+?)["']?$/i) ||
+                       inputText.match(/change\s+(?:the\s+)?topic\s+(?:to\s+)?["']?(.+?)["']?$/i);
+    
+    if (!topicMatch || !topicMatch[1]) {
+      return `📋 **Topic Command**\n\nTo set a room topic, say: "set topic [your topic]"\n\nCurrent topic for **${contextRoom}**: "${roomMeta?.topic || 'None set'}"\n\nWhat would you like the new topic to be?`;
+    }
+    
+    const newTopic = topicMatch[1].trim();
+    if (roomMeta) {
+      roomMeta.topic = newTopic;
+      io.to(contextRoom).emit("room update", { roomName: contextRoom, topic: newTopic, isLocked: roomMeta.isLocked });
+      createSystemMessage(contextRoom, `Topic changed to: ${newTopic} (by AI_Bot on ${admin.username}'s order)`);
+      return `✅ Done! I've set the topic in **${contextRoom}** to: "${newTopic}"`;
+    }
+    return `❌ Room **${contextRoom}** not found.`;
+  }
+  
+  // === LOCK ROOM COMMAND ===
+  if (lower.includes('lock') && !lower.includes('unlock')) {
+    const reasonMatch = inputText.match(/lock\s+(?:room\s+)?(?:because\s+|reason:\s*)?(.+)?$/i);
+    const reason = reasonMatch?.[1]?.trim() || 'Room locked by administrator';
+    
+    if (roomMeta) {
+      roomMeta.isLocked = true;
+      io.to(contextRoom).emit("room update", { roomName: contextRoom, topic: roomMeta.topic, isLocked: true });
+      createSystemMessage(contextRoom, `🔒 Room locked: ${reason} (by AI_Bot on ${admin.username}'s order)`);
+      return `✅ Done! I've locked **${contextRoom}**. Reason: "${reason}"`;
+    }
+    return `❌ Room **${contextRoom}** not found.`;
+  }
+  
+  // === UNLOCK ROOM COMMAND ===
+  if (lower.includes('unlock')) {
+    if (roomMeta) {
+      roomMeta.isLocked = false;
+      io.to(contextRoom).emit("room update", { roomName: contextRoom, topic: roomMeta.topic, isLocked: false });
+      createSystemMessage(contextRoom, `🔓 Room unlocked by AI_Bot (on ${admin.username}'s order)`);
+      return `✅ Done! I've unlocked **${contextRoom}**.`;
+    }
+    return `❌ Room **${contextRoom}** not found.`;
+  }
+  
+  // === ROOM STATUS/REPORT COMMAND ===
+  if (lower.includes('room status') || lower.includes('room report') || lower.includes('who is in') || lower.includes('users in')) {
+    if (!roomMeta) {
+      return `❌ Room **${contextRoom}** not found.`;
+    }
+    
+    const usersInRoom = getUsersInRoom(contextRoom);
+    const userList = usersInRoom.map(u => `• ${u.name} (${u.role}${u.isSpectating ? ', muted' : ''})`).join('\n');
+    
+    return `📊 **Room Report: ${contextRoom}**\n\n**Topic:** ${roomMeta.topic || 'None set'}\n**Status:** ${roomMeta.isLocked ? '🔒 Locked' : '🔓 Open'}\n**Users (${usersInRoom.length}):**\n${userList || '• No users currently in room'}\n\nWhat action would you like me to take?`;
+  }
+  
+  // === USER STATUS/INFO COMMAND ===
+  if (lower.includes('user status') || lower.includes('info on') || lower.includes('check user')) {
+    const targetUsername = extractUsernameFromCommand(inputText, 'status') ||
+                          extractUsernameFromCommand(inputText, 'info') ||
+                          extractUsernameFromCommand(inputText, 'check');
+    
+    if (!targetUsername) {
+      return `📋 **User Info Command**\n\nTo check a user's status, say: "user status [username]" or "info on [username]"\n\nWho would you like information about?`;
+    }
+    
+    const targetUser = findUserByUsername(targetUsername);
+    if (!targetUser) {
+      return `❌ I couldn't find a user named "${targetUsername}".`;
+    }
+    
+    const behavior = userBehavior.get(targetUser.id) || { score: 0, warnings: 0 };
+    const isBanned = bannedUserIds.has(targetUser.id);
+    const isOnline = Object.values(onlineUsers).some(u => u.id === targetUser.id);
+    
+    return `👤 **User Info: ${targetUser.username}**\n\n**Role:** ${targetUser.role}\n**Status:** ${isBanned ? '🚫 Banned' : (isOnline ? '🟢 Online' : '⚪ Offline')}\n**Behavior Score:** ${behavior.score.toFixed(1)}\n**Warnings:** ${behavior.warnings}\n**Muted:** ${targetUser.isSpectating ? 'Yes' : 'No'}\n\nWhat would you like me to do with this user?`;
+  }
+  
+  // === CLEAR CHAT COMMAND ===
+  if (lower.includes('clear chat') || lower.includes('clear messages') || lower.includes('clear history')) {
+    if (messagesByRoom[contextRoom]) {
+      messagesByRoom[contextRoom] = [];
+      io.to(contextRoom).emit("history cleared", { room: contextRoom });
+      createSystemMessage(contextRoom, `Message history cleared by AI_Bot (on ${admin.username}'s order).`);
+      return `✅ Done! I've cleared the message history in **${contextRoom}**.`;
+    }
+    return `❌ Room **${contextRoom}** not found.`;
   }
   
   // System status command
   if (lower.includes('system status') || lower.includes('server status')) {
-    return "✅ **System Status Report**\n\nAll systems operational. I'm functioning at full capacity with:\n- Intent recognition: Active\n- Sentiment analysis: Active\n- QA memory: Active\n- Moderation systems: Active\n- Room engine: Active\n\nHow can I help you manage the platform?";
+    const onlineCount = Object.keys(onlineUsers).length;
+    const roomCount = Object.keys(rooms).filter(r => rooms[r].type === 'public').length;
+    return `✅ **System Status Report**\n\n**Online Users:** ${onlineCount}\n**Active Rooms:** ${roomCount}\n**Banned Users:** ${bannedUserIds.size}\n**Your Context Room:** ${contextRoom}\n\n**Systems:**\n- Intent recognition: ✅ Active\n- Sentiment analysis: ✅ Active\n- QA memory: ✅ Active\n- Moderation: ✅ Active\n- Room engine: ✅ Active\n\nWhat would you like me to do?`;
   }
   
   // Help with admin commands
-  if (lower.includes('admin commands') || lower.includes('admin help')) {
-    return "👑 **Admin Commands**\n\nWhile chatting with me, you can ask about:\n- System status\n- User management advice\n- Moderation best practices\n- Room configuration recommendations\n- Platform analytics interpretation\n\nI can't directly execute moderation actions, but I can guide you through the admin panel features. What would you like to know?";
+  if (lower.includes('admin commands') || lower.includes('admin help') || lower.includes('what can you do')) {
+    return `👑 **AI Admin Commands**\n\nI can execute these commands in **${contextRoom}**:\n\n**User Management:**\n• "kick [username]" - Remove user from room\n• "ban [username]" - Ban user from server\n• "mute [username]" - Mute user in room\n• "unmute [username]" - Unmute user\n\n**Room Control:**\n• "set topic [text]" - Change room topic\n• "lock room" - Lock the room\n• "unlock room" - Unlock the room\n• "clear chat" - Clear message history\n\n**Information:**\n• "room status" - Get room report\n• "user status [username]" - Get user info\n• "system status" - System health check\n\nJust tell me what you need!`;
   }
   
-  // Check for general admin requests
-  if (lower.includes('kick') || lower.includes('ban') || lower.includes('mute')) {
-    return "As an AI assistant, I don't have the ability to execute moderation actions directly. However, as an administrator, you can:\n\n1. Use the admin panel for user management\n2. Access the Live Moderation Dashboard\n3. Configure room-specific settings\n\nWould you like guidance on using any of these features?";
+  // If no specific command matched but it seems like an admin request
+  if (lower.includes('help') && (lower.includes('mod') || lower.includes('admin'))) {
+    return `I'm ready to help you manage the platform! Here are some things I can do:\n\n• Kick or ban problematic users\n• Mute/unmute users\n• Change room topics\n• Lock/unlock rooms\n• Provide user and room reports\n\nJust tell me what you need, like "kick John" or "set topic Welcome everyone!"`;
   }
   
   return null; // Not an admin command, proceed with normal AI response
@@ -1673,6 +1979,11 @@ io.on("connection", (socket) => {
     if (room.type !== 'dm') {
       io.to(roomName).emit("user list", getUsersInRoom(roomName));
       io.emit("room list", getPublicRoomsWithCounts());
+      
+      // Track admin's room context for AI DM commands
+      if (user.role === 'admin') {
+        updateAdminRoomContext(user.id, roomName);
+      }
     }
     // Notify admins of status change
     broadcastToAdmins('admin:userListUpdated', getAllUsersSafe());
@@ -2646,6 +2957,17 @@ io.on("connection", (socket) => {
       broadcastToAdmins('admin:userListUpdated', getAllUsersSafe());
     } else {
       console.log(`Anonymous socket disconnected: ${socket.id}`);
+    }
+  });
+});
+
+// Catch-all route for React SPA (must be after all API routes)
+app.get("*", (req, res) => {
+  const indexPath = path.join(__dirname, "client/dist/index.html");
+  res.sendFile(indexPath, (err) => {
+    if (err) {
+      // If index.html doesn't exist, show server status
+      res.send("ChatNet server is running 🚀");
     }
   });
 });

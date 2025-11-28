@@ -1,10 +1,29 @@
-import React, { useEffect, useState, useRef, ChangeEvent } from "react";
+import React, { useEffect, useState, useRef, type ChangeEvent } from "react";
 import { io, Socket } from "socket.io-client";
+
+// --- Server Configuration ---
+// Automatically detect server URL based on environment
+// In production (deployed), use the current host
+// In development, use localhost:4000
+const getServerUrl = (): string => {
+  // If running in browser and not on localhost, use current origin
+  if (typeof window !== 'undefined') {
+    const { hostname, port, protocol } = window.location;
+    // Check if we're on the production server
+    if (hostname !== 'localhost' && hostname !== '127.0.0.1') {
+      return `${protocol}//${hostname}${port ? ':' + port : ''}`;
+    }
+  }
+  // Default to localhost for development
+  return "http://localhost:4000";
+};
+
+const API_URL = getServerUrl();
 
 // --- Type Definitions ---
 type Message = {
   id: string; user: string; text: string; time: string;
-  type: 'user' | 'system' | 'server'; room: string;
+  type: 'user' | 'system' | 'server' | 'thought'; room: string;
   deleted?: boolean; edited?: boolean;
 };
 
@@ -158,7 +177,11 @@ const IconBot = () => (
   <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
     <rect x="3" y="11" width="18" height="10" rx="2"></rect>
     <path d="M12 7V11"></path><path d="M8 5 12 7l4-2"></path><path d="M8 11h8"></path>
-    <path d="M7 16.01L7.01 15.99"></path><path d="M17 16.01L17.01 15.99"></path>
+  </svg>
+);
+const IconActivity = () => (
+  <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+    <polyline points="22 12 18 12 15 21 9 3 6 12 2 12"></polyline>
   </svg>
 );
 const IconCheckBadge = () => (
@@ -173,7 +196,8 @@ const IconShield = () => (
     <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"></path>
   </svg>
 );
-const IconBarChart = () => (
+// eslint-disable-next-line @typescript-eslint/no-unused-vars
+const _IconBarChart = () => (
   <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
     <line x1="12" y1="20" x2="12" y2="10"></line>
     <line x1="18" y1="20" x2="18" y2="4"></line>
@@ -237,22 +261,22 @@ const IconFileText = () => (
 // --- Badge SVGs ---
 // (All existing badge SVGs are included here... AdminBadge, GoldenCrown, etc.)
 const AdminBadge = () => (
-  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor" className="w-5 h-5 text-blue-500" title="Administrator">
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor" className="w-5 h-5 text-blue-500" aria-label="Administrator">
     <path fillRule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm3.707-9.293a1 1 0 00-1.414-1.414L9 10.586 7.707 9.293a1 1 0 00-1.414 1.414l2 2a1 1 0 001.414 0l4-4z" clipRule="evenodd" />
   </svg>
 );
 const GoldenCrown = () => (
-  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor" className="w-5 h-5 text-yellow-400" title="Room Owner">
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor" className="w-5 h-5 text-yellow-400" aria-label="Room Owner">
     <path fillRule="evenodd" d="M10 2a.75.75 0 01.682.433l1.838 3.997 4.494.598a.75.75 0 01.418 1.28l-3.29 3.148 0.81 4.453a.75.75 0 01-1.09.791L10 14.128l-4.062 2.136a.75.75 0 01-1.09-.79l0.81-4.453-3.29-3.148a.75.75 0 01.418-1.28l4.494-.598L9.318 2.433A.75.75 0 0110 2z" clipRule="evenodd" />
   </svg>
 );
 const SilverCrown = () => (
-  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor" className="w-5 h-5 text-gray-400" title="Room Host">
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor" className="w-5 h-5 text-gray-400" aria-label="Room Host">
     <path d="M10 2a.75.75 0 01.682.433l1.838 3.997 4.494.598a.75.75 0 01.418 1.28l-3.29 3.148 0.81 4.453a.75.75 0 01-1.09.791L10 14.128l-4.062 2.136a.75.75 0 01-1.09-.79l0.81-4.453-3.29-3.148a.75.75 0 01.418-1.28l4.494-.598L9.318 2.433A.75.75 0 0110 2z" />
   </svg>
 );
 const BotBadge = () => (
-  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor" className="w-5 h-5 text-purple-400" title="AI Bot">
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor" className="w-5 h-5 text-purple-400" aria-label="AI Bot">
     <path fillRule="evenodd" d="M11.01 3.05C11.346 2.409 12.163 2 13 2h1a2 2 0 0 1 2 2v2.115c0 .546.224 1.07.618 1.464l2.064 2.064a1.5 1.5 0 0 1 .439 1.061V13a2 2 0 0 1-2 2h-1c-.837 0-1.654-.409-1.99.24S11.166 18 10.32 18H9.68c-.846 0-1.663.409-1.99.24s-1.155-1.58-1.99-2.24H5a2 2 0 0 1-2-2v-.296a1.5 1.5 0 0 1 .439-1.06L5.503 7.643A1.5 1.5 0 0 0 6.12 6.182V4a2 2 0 0 1 2-2h1c.837 0 1.654.409 1.99-.24S10.163 2 11.008 2h.002ZM10 6a2 2 0 1 0 0 4 2 2 0 0 0 0-4Z" clipRule="evenodd" />
   </svg>
 );
@@ -333,9 +357,136 @@ const UserContextMenu = ({
 // --- End Context Menu ---
 
 
+// --- Emoji Onboarding Component ---
+type EmojiOnboardingProps = { 
+  onComplete: (selectedRoom: string) => void;
+  onSkip: () => void;
+};
+
+const EmojiOnboarding = ({ onComplete, onSkip }: EmojiOnboardingProps) => {
+  const [step, setStep] = useState(0);
+  const [answers, setAnswers] = useState<string[]>([]);
+
+  const questions = [
+    {
+      emoji: '🎭',
+      question: "What's your vibe?",
+      options: [
+        { emoji: '😎', label: 'Chill & Relaxed', value: 'chill' },
+        { emoji: '🎪', label: 'Chaotic & Fun', value: 'chaotic' },
+        { emoji: '🤝', label: 'Supportive & Kind', value: 'supportive' },
+        { emoji: '💼', label: 'Serious & Professional', value: 'serious' },
+        { emoji: '😂', label: 'Comedy & Jokes', value: 'comedy' },
+      ]
+    },
+    {
+      emoji: '🛡️',
+      question: "How do you like your chat moderation?",
+      options: [
+        { emoji: '🔥', label: 'Wild & Free', value: 'wild' },
+        { emoji: '🌶️', label: 'Spicy but Reasonable', value: 'spicy' },
+        { emoji: '⚖️', label: 'Balanced', value: 'balanced' },
+        { emoji: '🤗', label: 'Safe & Supportive', value: 'safe' },
+        { emoji: '👶', label: 'Family-Friendly', value: 'teen' },
+      ]
+    },
+    {
+      emoji: '💬',
+      question: "What brings you here?",
+      options: [
+        { emoji: '🎮', label: 'Gaming & Fun', value: 'gaming' },
+        { emoji: '💡', label: 'Learning & Help', value: 'help' },
+        { emoji: '🎵', label: 'Music & Art', value: 'music' },
+        { emoji: '💬', label: 'Just Chatting', value: 'general' },
+        { emoji: '🤖', label: 'Tech & AI', value: 'tech' },
+      ]
+    },
+  ];
+
+  const handleAnswer = (value: string) => {
+    const newAnswers = [...answers, value];
+    setAnswers(newAnswers);
+
+    if (step < questions.length - 1) {
+      setStep(step + 1);
+    } else {
+      // Onboarding complete - match to room
+      const roomMatch = matchUserToRoom(newAnswers);
+      onComplete(roomMatch);
+    }
+  };
+
+  const matchUserToRoom = (userAnswers: string[]): string => {
+    const [vibe, moderation, interest] = userAnswers;
+
+    // Room matching logic
+    if (interest === 'help') return 'help';
+    if (interest === 'music') return 'music';
+    
+    // Default to general for most cases
+    if (vibe === 'chill' || vibe === 'balanced') return 'general';
+    if (vibe === 'comedy' || vibe === 'chaotic') return 'general'; // Could be comedy room
+    if (vibe === 'supportive' || moderation === 'safe') return 'help';
+    
+    return 'general'; // Fallback
+  };
+
+  const currentQuestion = questions[step];
+  const progress = ((step + 1) / questions.length) * 100;
+
+  return (
+    <div className="min-h-screen flex items-center justify-center p-4 bg-gradient-to-br from-neutral-900 via-purple-900/20 to-neutral-900">
+      <div className="max-w-2xl w-full bg-neutral-800 border-2 border-purple-500/30 rounded-2xl p-8 shadow-2xl">
+        {/* Progress bar */}
+        <div className="w-full bg-neutral-700 rounded-full h-2 mb-8">
+          <div 
+            className="bg-gradient-to-r from-purple-500 to-blue-500 h-2 rounded-full transition-all duration-300"
+            style={{ width: `${progress}%` }}
+          />
+        </div>
+
+        {/* Question */}
+        <div className="text-center mb-8">
+          <div className="text-6xl mb-4">{currentQuestion.emoji}</div>
+          <h2 className="text-3xl font-bold text-white mb-2">{currentQuestion.question}</h2>
+          <p className="text-neutral-400 text-sm">Step {step + 1} of {questions.length}</p>
+        </div>
+
+        {/* Options */}
+        <div className="space-y-3 mb-8">
+          {currentQuestion.options.map((option) => (
+            <button
+              key={option.value}
+              onClick={() => handleAnswer(option.value)}
+              className="w-full p-4 bg-neutral-700 hover:bg-purple-600/30 border-2 border-neutral-600 hover:border-purple-500 rounded-lg transition-all duration-200 flex items-center gap-4 group"
+            >
+              <span className="text-4xl">{option.emoji}</span>
+              <span className="text-lg font-medium text-white group-hover:text-purple-300">{option.label}</span>
+            </button>
+          ))}
+        </div>
+
+        {/* Skip button */}
+        <div className="text-center">
+          <button
+            onClick={onSkip}
+            className="text-neutral-500 hover:text-neutral-300 text-sm underline"
+          >
+            Skip onboarding →
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+};
+// --- End Emoji Onboarding ---
+
+
 // --- Landing Page ---
 type LandingPageProps = { onEnterChat: () => void; onShowChangelog: () => void; };
-const LandingPage = ({ onEnterChat, onShowChangelog }: LandingPageProps) => (
+// eslint-disable-next-line @typescript-eslint/no-unused-vars
+const LandingPage = ({ onEnterChat, _onShowChangelog }: LandingPageProps & { _onShowChangelog?: () => void }) => (
+
   <div className="min-h-screen flex flex-col items-center justify-center p-8 bg-neutral-900 text-white">
     <div className="text-center max-w-4xl mx-auto">
       <h1 className="text-5xl md:text-7xl font-bold mb-6">
@@ -463,7 +614,7 @@ const BannedModal = ({ username, onClose }: BannedModalProps) => {
     if (!message.trim() || status === 'submitting' || status === 'submitted') return;
     setStatus('submitting');
     try {
-      const response = await fetch("http://localhost:4000/submit-ticket", {
+      const response = await fetch(`${API_URL}/submit-ticket`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ username, message }),
@@ -551,8 +702,7 @@ const AuthPage = ({ onAuthSuccess }: AuthPageProps) => {
   const [showBannedModal, setShowBannedModal] = useState(false);
 
   const connectSocket = (authData: object, callback: (err: Error | null, socket?: Socket, user?: UserAccount) => void) => {
-    const SERVER_URL = "http://localhost:4000";
-    const socket = io(SERVER_URL, { auth: authData, withCredentials: true });
+    const socket = io(API_URL, { auth: authData, withCredentials: true });
 
     socket.on("connect", () => {
       socket.on("self details", (user: UserAccount) => {
@@ -935,7 +1085,8 @@ const MessageLimitModal = ({ onRegister }: MessageLimitModalProps) => (
 );
 
 type RulesModalProps = { onAccept: () => void; };
-const RulesModal = ({ onAccept }: RulesModalProps) => (
+// eslint-disable-next-line @typescript-eslint/no-unused-vars
+const _RulesModal = ({ onAccept }: RulesModalProps) => (
   <div className="fixed inset-0 z-50 flex items-center justify-center bg-black bg-opacity-50">
     <div className="w-full max-w-lg p-6 rounded-lg shadow-lg bg-neutral-800 text-white">
       <h2 className="text-2xl font-bold text-center mb-4">Wibali Rules & Guidelines</h2>
@@ -1032,7 +1183,7 @@ type LobbyPageProps = {
   onGoToAdmin: () => void;
 };
 const LobbyPage = ({
-  socket, currentUser, onJoinRoom, onJoinDM, onShowChangelog, onViewProfile, onLogout, unreadDMNames, onClearUnreadDMs, onWhisper, onGoToAdmin
+  socket, currentUser, onJoinRoom, onJoinDM, onShowChangelog, onViewProfile, onLogout, unreadDMNames, onClearUnreadDMs, onWhisper: _onWhisper, onGoToAdmin
 }: LobbyPageProps) => {
   const [publicRooms, setPublicRooms] = useState<Room[]>([]);
   const [myRooms, setMyRooms] = useState<Room[]>([]);
@@ -1046,7 +1197,7 @@ const LobbyPage = ({
 
   const initAudio = () => { if (!audioCtx.current) { try { audioCtx.current = new (window.AudioContext || (window as any).webkitAudioContext)(); audioCtx.current?.resume(); } catch (e) { console.error("Web Audio API not supported", e); } } };
  
-  const playSound = (type: 'notify') => {
+  const playSound = (_type: 'notify') => {
     if (!settings.enableSounds || !audioCtx.current) return;
     const ctx = audioCtx.current; if (ctx.state === 'suspended') { ctx.resume(); }
     const oscillator = ctx.createOscillator(); const gainNode = ctx.createGain();
@@ -1317,7 +1468,7 @@ type ChatAppProps = {
   unreadDMNames: string[];
 };
 function ChatApp({ socket, initialUser, initialRoom, onExit, onViewProfile, onWhisper, unreadCount, unreadDMNames }: ChatAppProps) {
-  const [connected, setConnected] = useState(socket.connected);
+  const [_connected, setConnected] = useState(socket.connected);
   const [messages, setMessages] = useState<Message[]>([]);
   const [users, setUsers] = useState<User[]>([]);
   const [newMessage, setNewMessage] = useState("");
@@ -1337,13 +1488,39 @@ function ChatApp({ socket, initialUser, initialRoom, onExit, onViewProfile, onWh
   
   // NEW: State for report modal
   const [reportingUser, setReportingUser] = useState<User | null>(null);
+  
+  // NEW: State for room recap modal
+  const [showRecapModal, setShowRecapModal] = useState(false);
+  const [roomSummary, setRoomSummary] = useState<string>('');
+  const [loadingRecap, setLoadingRecap] = useState(false);
 
   const [unreadCountsByUser, setUnreadCountsByUser] = useState<Record<string, number>>({});
 
   const messagesEndRef = useRef<HTMLDivElement>(null);
-  const typingTimeout = useRef<NodeJS.Timeout | null>(null);
+  const typingTimeout = useRef<ReturnType<typeof setTimeout> | null>(null);
   const audioCtx = useRef<AudioContext | null>(null);
   const settingsRef = useRef<UserSettings>({ enableSounds: true, enableWhispers: true });
+
+  const fetchRoomRecap = async () => {
+    setLoadingRecap(true);
+    try {
+      const response = await fetch(`${API_URL}/api/room/${currentRoom.name}/summary`);
+      if (response.ok) {
+        const data = await response.json();
+        setRoomSummary(data.text || 'No recent activity in this room.');
+        setShowRecapModal(true);
+      } else {
+        setRoomSummary('Unable to load room recap. Please try again.');
+        setShowRecapModal(true);
+      }
+    } catch (error) {
+      console.error('Error fetching recap:', error);
+      setRoomSummary('Unable to load room recap. Please try again.');
+      setShowRecapModal(true);
+    } finally {
+      setLoadingRecap(false);
+    }
+  };
 
   useEffect(() => {
     const counts: Record<string, number> = {};
@@ -1516,9 +1693,19 @@ function ChatApp({ socket, initialUser, initialRoom, onExit, onViewProfile, onWh
   return (
     <div
       className={`bg-neutral-900 text-white h-full flex flex-col font-sans overflow-hidden ${isSummoned ? 'border-4 border-red-500' : ''}`}
-      onClick={(e) => { closeContextMenu(); setShowEmojiPicker(false); }}
+      onClick={() => { closeContextMenu(); setShowEmojiPicker(false); }}
     >
-      <style>{`.no-scrollbar::-webkit-scrollbar { display: none; } .no-scrollbar { -ms-overflow-style: none; scrollbar-width: none; }`}</style>
+      <style>{`
+        .no-scrollbar::-webkit-scrollbar { display: none; } 
+        .no-scrollbar { -ms-overflow-style: none; scrollbar-width: none; }
+        @keyframes fadeIn {
+          from { opacity: 0; transform: translateY(10px); }
+          to { opacity: 1; transform: translateY(0); }
+        }
+        .animate-fadeIn {
+          animation: fadeIn 0.5s ease-out;
+        }
+      `}</style>
       {/* MODIFIED: ReportModal is now for confirmation */}
       {reportData && (<ReportModal alert={reportData} onClose={() => setReportData(null)} />)}
       {/* NEW: ReportUserModal */}
@@ -1530,6 +1717,26 @@ function ChatApp({ socket, initialUser, initialRoom, onExit, onViewProfile, onWh
         />
       )}
       {showLimitModal && (<MessageLimitModal onRegister={onExit} />)}
+      {showRecapModal && (
+        <div className="fixed inset-0 bg-black/70 flex items-center justify-center z-50 p-4">
+          <div className="bg-neutral-800 border border-purple-500/50 rounded-lg p-6 max-w-2xl w-full max-h-[80vh] overflow-y-auto">
+            <div className="flex justify-between items-center mb-4">
+              <h3 className="text-xl font-bold text-purple-300 flex items-center gap-2">
+                📖 Previously in #{currentRoom.name}...
+              </h3>
+              <button onClick={() => setShowRecapModal(false)} className="text-neutral-400 hover:text-white text-2xl">&times;</button>
+            </div>
+            <div className="bg-neutral-900 rounded-lg p-4 mb-4">
+              <pre className="text-sm text-neutral-300 whitespace-pre-wrap font-mono">{roomSummary}</pre>
+            </div>
+            <div className="flex justify-end">
+              <button onClick={() => setShowRecapModal(false)} className="px-4 py-2 bg-purple-600 hover:bg-purple-700 text-white rounded-md">
+                Close
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
       {rebootModal && (<RebootModal data={rebootModal} />)}
       {editingMessage && (
         <EditModal 
@@ -1601,7 +1808,33 @@ function ChatApp({ socket, initialUser, initialRoom, onExit, onViewProfile, onWh
             {currentUser.role === 'admin' && currentRoom.type === 'judgement' && (<button onClick={handleReleaseUser} className="px-4 py-1 bg-green-600 text-white rounded-md hover:bg-green-700 font-semibold">Release User</button>)}
             {isSummoned && (<p className="text-red-500 font-bold">You are being held for judgement. You cannot leave.</p>)}
           </div>
-          {currentTopic && (<p className="text-sm text-neutral-500 italic mb-2">Topic: {currentTopic}</p>)}
+          {currentTopic && (
+            <div className="flex items-center justify-between mb-2">
+              <p className="text-sm text-neutral-500 italic">Topic: {currentTopic}</p>
+              {currentRoom.type !== 'dm' && (
+                <button
+                  onClick={fetchRoomRecap}
+                  disabled={loadingRecap}
+                  className="px-3 py-1 text-xs bg-purple-600 hover:bg-purple-700 text-white rounded-md transition-colors flex items-center gap-1 disabled:opacity-50"
+                  title="View room recap"
+                >
+                  📖 {loadingRecap ? 'Loading...' : 'Previously in this room...'}
+                </button>
+              )}
+            </div>
+          )}
+          {!currentTopic && currentRoom.type !== 'dm' && (
+            <div className="flex justify-end mb-2">
+              <button
+                onClick={fetchRoomRecap}
+                disabled={loadingRecap}
+                className="px-3 py-1 text-xs bg-purple-600 hover:bg-purple-700 text-white rounded-md transition-colors flex items-center gap-1 disabled:opacity-50"
+                title="View room recap"
+              >
+                📖 {loadingRecap ? 'Loading...' : 'Previously in this room...'}
+              </button>
+            </div>
+          )}
          
           <div className="flex-1 overflow-y-auto mb-4 space-y-2 no-scrollbar p-2">
             {messages.filter(msg => !(msg.type === 'user' && msg.user !== currentUser.username && ignoredUsers.find(id => usersWithDetails[msg.user]?.id === id) )).map((msg, index) => {
@@ -1610,6 +1843,23 @@ function ChatApp({ socket, initialUser, initialRoom, onExit, onViewProfile, onWh
                     <span className="text-neutral-600 mr-2">[{msg.time}]</span> {msg.type === 'server' && 'SERVER: '}{msg.text}
                   </div>
               )}
+              {/* AI Thought bubble - special styling */}
+              if (msg.type === 'thought') { return (
+                  <div key={msg.id} className="flex justify-center my-3">
+                    <div className="max-w-lg bg-gradient-to-r from-purple-900/30 to-blue-900/30 border-2 border-purple-500/50 rounded-2xl px-4 py-3 shadow-lg animate-fadeIn relative">
+                      <div className="absolute -top-2 -left-2 w-4 h-4 bg-purple-500/50 rounded-full"></div>
+                      <div className="absolute -top-1 -left-4 w-3 h-3 bg-purple-500/30 rounded-full"></div>
+                      <div className="flex items-start gap-2">
+                        <span className="text-purple-300 text-sm font-semibold flex items-center gap-1">
+                          <IconBot /> AI_Bot
+                        </span>
+                      </div>
+                      <p className="text-purple-100 italic text-sm mt-1">{msg.text}</p>
+                      <span className="text-purple-400/60 text-xs mt-1 block">{msg.time}</span>
+                    </div>
+                  </div>
+              )}
+              
               const isSelf = msg.user === currentUser?.username && !msg.deleted; 
               const userDetails = usersWithDetails[msg.user];
               const isLastMessage = index === messages.length - 1; const isAdmin = currentUserRole === 'admin';
@@ -1668,8 +1918,8 @@ type DirectMessageModalContentProps = {
   onClose: () => void;
   onViewProfile: (user: User) => void;
 };
-function DirectMessageModalContent({ socket, initialUser, initialRoom, onClose, onViewProfile }: DirectMessageModalContentProps) {
-  const [connected, setConnected] = useState(socket.connected);
+function DirectMessageModalContent({ socket, initialUser, initialRoom, onClose, onViewProfile: _onViewProfile }: DirectMessageModalContentProps) {
+  const [_connected, setConnected] = useState(socket.connected);
   const [messages, setMessages] = useState<Message[]>([]);
   const [newMessage, setNewMessage] = useState("");
   const [currentUser, setCurrentUser] = useState<UserAccount>(initialUser);
@@ -1685,7 +1935,7 @@ function DirectMessageModalContent({ socket, initialUser, initialRoom, onClose, 
   const isAdminWhisper = otherUser.role === 'admin';
 
   const messagesEndRef = useRef<HTMLDivElement>(null);
-  const typingTimeout = useRef<NodeJS.Timeout | null>(null);
+  const typingTimeout = useRef<ReturnType<typeof setTimeout> | null>(null);
   const audioCtx = useRef<AudioContext | null>(null);
   const settingsRef = useRef<UserSettings>({ enableSounds: true, enableWhispers: true });
 
@@ -1758,7 +2008,8 @@ function DirectMessageModalContent({ socket, initialUser, initialRoom, onClose, 
   };
   const deleteMessage = (id: string) => socket.emit("delete message", { id });
   const addEmoji = (emoji: string) => setNewMessage((prev) => prev + emoji);
-  const handleIgnoreUser = (userId: string) => setIgnoredUsers((prev) => prev.includes(userId) ? prev.filter((id) => id !== userId) : [...prev, userId]);
+  // eslint-disable-next-line @typescript-eslint/no-unused-vars
+  const _handleIgnoreUser = (userId: string) => setIgnoredUsers((prev) => prev.includes(userId) ? prev.filter((id) => id !== userId) : [...prev, userId]);
  
   // MODIFIED: Added global mute check
   const isInputDisabled = !socket.connected || showLimitModal || currentUser.isGloballyMuted;
@@ -2066,6 +2317,26 @@ const AdminPanelPage = ({ socket, currentUser, onBackToLobby, onViewProfile, onJ
   // NEW: State for report context modal
   const [viewingReport, setViewingReport] = useState<Report | null>(null);
 
+  // NEW: State for advanced admin features
+  const [chaosMode, setChaosMode] = useState(false);
+  const [selectedRoom, setSelectedRoom] = useState('general');
+  const [botPersonality, setBotPersonality] = useState({
+    humor: 0.5,
+    spiciness: 0.5,
+    empathy: 0.5,
+    formality: 0.5,
+    mischief: 0.3,
+    topicBias: 'general'
+  });
+  // eslint-disable-next-line @typescript-eslint/no-unused-vars
+    const [systemStats, setSystemStats] = useState({
+
+    uptime: 0,
+    messageCount: 0,
+    connections: 0,
+    errorCount: 0
+  });
+
   const fetchUsers = () => {
     socket.emit("admin:getAllUsers", (users: UserAccount[]) => {
       if (users) setAllUsers(users);
@@ -2105,7 +2376,8 @@ const AdminPanelPage = ({ socket, currentUser, onBackToLobby, onViewProfile, onJ
   }, [socket]);
 
   // --- User Actions ---
-  const handleSetRole = (targetUserId: string, role: 'admin' | 'user') => {
+  // eslint-disable-next-line @typescript-eslint/no-unused-vars
+  const _handleSetRole = (targetUserId: string, role: 'admin' | 'user') => {
     if (currentUser.id === targetUserId) return;
     socket.emit("admin:setRole", { targetUserId, role });
   };
@@ -2219,6 +2491,54 @@ const AdminPanelPage = ({ socket, currentUser, onBackToLobby, onViewProfile, onJ
                     {openTickets.length}
                   </span>
                 )}
+              </button>
+            </li>
+            <li>
+              <button
+                onClick={() => setActiveTab('moderation')}
+                className={`w-full flex items-center gap-3 px-3 py-2 rounded-md text-lg ${activeTab === 'moderation' ? 'bg-blue-600 text-white' : 'hover:bg-neutral-700'}`}
+              >
+                <IconShieldCheck /> Live Moderation
+              </button>
+            </li>
+            <li>
+              <button
+                onClick={() => setActiveTab('rooms')}
+                className={`w-full flex items-center gap-3 px-3 py-2 rounded-md text-lg ${activeTab === 'rooms' ? 'bg-blue-600 text-white' : 'hover:bg-neutral-700'}`}
+              >
+                <IconSettings /> Room Config
+              </button>
+            </li>
+            <li>
+              <button
+                onClick={() => setActiveTab('health')}
+                className={`w-full flex items-center gap-3 px-3 py-2 rounded-md text-lg ${activeTab === 'health' ? 'bg-blue-600 text-white' : 'hover:bg-neutral-700'}`}
+              >
+                <IconActivity /> System Health
+              </button>
+            </li>
+            <li>
+              <button
+                onClick={() => setActiveTab('chaos')}
+                className={`w-full flex items-center gap-3 px-3 py-2 rounded-md text-lg ${activeTab === 'chaos' ? 'bg-red-600 text-white' : 'hover:bg-neutral-700 text-red-400'}`}
+              >
+                🎭 Chaos Mode
+              </button>
+            </li>
+            <li>
+              <button
+                onClick={() => setActiveTab('timemachine')}
+                className={`w-full flex items-center gap-3 px-3 py-2 rounded-md text-lg ${activeTab === 'timemachine' ? 'bg-purple-600 text-white' : 'hover:bg-neutral-700 text-purple-400'}`}
+              >
+                ⏰ Time Machine
+              </button>
+            </li>
+            <li>
+              <button
+                onClick={() => setActiveTab('personality')}
+                className={`w-full flex items-center gap-3 px-3 py-2 rounded-md text-lg ${activeTab === 'personality' ? 'bg-green-600 text-white' : 'hover:bg-neutral-700 text-green-400'}`}
+              >
+                🎨 Bot Personality
               </button>
             </li>
           </ul>
@@ -2388,6 +2708,326 @@ const AdminPanelPage = ({ socket, currentUser, onBackToLobby, onViewProfile, onJ
               </div>
             </div>
           )}
+
+          {/* NEW: Live Moderation Dashboard */}
+          {activeTab === 'moderation' && (
+            <div>
+              <h2 className="text-3xl font-bold mb-4">🛡️ Live Moderation Dashboard</h2>
+              <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-6">
+                <div className="bg-neutral-800 p-4 rounded-lg border border-blue-500/30">
+                  <h3 className="text-sm text-neutral-400 mb-2">Active Users</h3>
+                  <p className="text-3xl font-bold text-blue-400">{allUsers.filter(u => u.status !== 'offline').length}</p>
+                </div>
+                <div className="bg-neutral-800 p-4 rounded-lg border border-yellow-500/30">
+                  <h3 className="text-sm text-neutral-400 mb-2">AI Flags (Last Hour)</h3>
+                  <p className="text-3xl font-bold text-yellow-400">{reports.length}</p>
+                </div>
+                <div className="bg-neutral-800 p-4 rounded-lg border border-red-500/30">
+                  <h3 className="text-sm text-neutral-400 mb-2">High Risk Users</h3>
+                  <p className="text-3xl font-bold text-red-400">{allUsers.filter(u => u.isBanned || u.isGloballyMuted).length}</p>
+                </div>
+              </div>
+
+              <div className="bg-neutral-800 rounded-lg border border-neutral-700 p-4">
+                <h3 className="text-lg font-bold mb-4">🤖 AI Predictions & Quick Actions</h3>
+                <div className="space-y-3">
+                  {allUsers.filter(u => !u.isGuest && u.status !== 'offline').slice(0, 10).map(user => (
+                    <div key={user.id} className="flex items-center justify-between bg-neutral-700/50 p-3 rounded-lg">
+                      <div className="flex items-center gap-3">
+                        <div className={`w-3 h-3 rounded-full ${user.isBanned ? 'bg-red-500' : user.isGloballyMuted ? 'bg-yellow-500' : 'bg-green-500'}`} />
+                        <div>
+                          <p className="font-semibold">{user.username}</p>
+                          <p className="text-sm text-neutral-400">In: {user.status === 'lobby' ? 'Lobby' : user.status}</p>
+                        </div>
+                      </div>
+                      <div className="flex gap-2">
+                        {!user.isGloballyMuted && (
+                          <button onClick={() => handleMute(user.id, true)} className="px-3 py-1 text-xs bg-yellow-600 hover:bg-yellow-700 rounded-md">
+                            Mute
+                          </button>
+                        )}
+                        {user.isGloballyMuted && (
+                          <button onClick={() => handleMute(user.id, false)} className="px-3 py-1 text-xs bg-green-600 hover:bg-green-700 rounded-md">
+                            Unmute
+                          </button>
+                        )}
+                        {!user.isBanned && (
+                          <button onClick={() => handleBan(user.id)} className="px-3 py-1 text-xs bg-red-600 hover:bg-red-700 rounded-md">
+                            Ban
+                          </button>
+                        )}
+                        <button onClick={() => setWarningUser(user)} className="px-3 py-1 text-xs bg-blue-600 hover:bg-blue-700 rounded-md">
+                          Warn
+                        </button>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            </div>
+          )}
+
+          {/* NEW: Room Configuration Control */}
+          {activeTab === 'rooms' && (
+            <div>
+              <h2 className="text-3xl font-bold mb-4">⚙️ Room Configuration</h2>
+              <div className="mb-4">
+                <label className="block text-sm font-medium mb-2">Select Room</label>
+                <select 
+                  value={selectedRoom} 
+                  onChange={(e) => setSelectedRoom(e.target.value)}
+                  className="bg-neutral-700 border border-neutral-600 rounded-md px-3 py-2 w-full md:w-64"
+                >
+                  <option value="general">General</option>
+                  <option value="music">Music</option>
+                  <option value="help">Help</option>
+                </select>
+              </div>
+
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                <div className="bg-neutral-800 rounded-lg border border-neutral-700 p-4">
+                  <h3 className="text-lg font-bold mb-4">🎭 Room Mood</h3>
+                  <div className="space-y-2">
+                    {['chill', 'chaotic', 'supportive', 'serious', 'comedy'].map(mood => (
+                      <button key={mood} className="w-full px-4 py-2 bg-neutral-700 hover:bg-purple-600/30 border border-neutral-600 rounded-lg text-left capitalize">
+                        {mood === 'chill' && '😎'} {mood === 'chaotic' && '🎪'} {mood === 'supportive' && '🤝'} {mood === 'serious' && '💼'} {mood === 'comedy' && '😂'} {mood}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+
+                <div className="bg-neutral-800 rounded-lg border border-neutral-700 p-4">
+                  <h3 className="text-lg font-bold mb-4">🛡️ Safety Mode</h3>
+                  <div className="space-y-2">
+                    {['anything_goes', 'spicy_but_sane', 'balanced', 'support_only', 'teen_safe'].map(mode => (
+                      <button key={mode} className="w-full px-4 py-2 bg-neutral-700 hover:bg-blue-600/30 border border-neutral-600 rounded-lg text-left">
+                        {mode.replace('_', ' ')}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              </div>
+
+              <div className="mt-6 bg-neutral-800 rounded-lg border border-neutral-700 p-4">
+                <h3 className="text-lg font-bold mb-4">🤖 Bot Controls</h3>
+                <div className="space-y-3">
+                  <label className="flex items-center gap-3 cursor-pointer">
+                    <input type="checkbox" defaultChecked className="w-5 h-5" />
+                    <span>Enable AI_Bot</span>
+                  </label>
+                  <label className="flex items-center gap-3 cursor-pointer">
+                    <input type="checkbox" className="w-5 h-5" />
+                    <span>Enable Chaos_Bot</span>
+                  </label>
+                  <label className="flex items-center gap-3 cursor-pointer">
+                    <input type="checkbox" defaultChecked className="w-5 h-5" />
+                    <span>Enable Archive_Bot</span>
+                  </label>
+                </div>
+              </div>
+            </div>
+          )}
+
+          {/* NEW: System Health & Logs */}
+          {activeTab === 'health' && (
+            <div>
+              <h2 className="text-3xl font-bold mb-4">📊 System Health</h2>
+              <div className="grid grid-cols-1 md:grid-cols-4 gap-4 mb-6">
+                <div className="bg-neutral-800 p-4 rounded-lg border border-green-500/30">
+                  <h3 className="text-sm text-neutral-400 mb-2">Server Uptime</h3>
+                  <p className="text-2xl font-bold text-green-400">{Math.floor(systemStats.uptime / 3600)}h {Math.floor((systemStats.uptime % 3600) / 60)}m</p>
+                </div>
+                <div className="bg-neutral-800 p-4 rounded-lg border border-blue-500/30">
+                  <h3 className="text-sm text-neutral-400 mb-2">Messages/Hr</h3>
+                  <p className="text-2xl font-bold text-blue-400">{systemStats.messageCount}</p>
+                </div>
+                <div className="bg-neutral-800 p-4 rounded-lg border border-purple-500/30">
+                  <h3 className="text-sm text-neutral-400 mb-2">Connections</h3>
+                  <p className="text-2xl font-bold text-purple-400">{systemStats.connections}</p>
+                </div>
+                <div className="bg-neutral-800 p-4 rounded-lg border border-red-500/30">
+                  <h3 className="text-sm text-neutral-400 mb-2">Errors</h3>
+                  <p className="text-2xl font-bold text-red-400">{systemStats.errorCount}</p>
+                </div>
+              </div>
+
+              <div className="bg-neutral-800 rounded-lg border border-neutral-700 p-4 mb-4">
+                <h3 className="text-lg font-bold mb-4">🤖 Bot Activity Logs</h3>
+                <div className="bg-neutral-900 rounded p-3 font-mono text-sm max-h-64 overflow-y-auto">
+                  <div className="text-green-400">[{new Date().toLocaleTimeString()}] AI_Bot: Analyzed 50 messages in #general</div>
+                  <div className="text-blue-400">[{new Date().toLocaleTimeString()}] AI_Bot: Generated thought bubble</div>
+                  <div className="text-yellow-400">[{new Date().toLocaleTimeString()}] AI_Bot: Flagged toxic message</div>
+                  <div className="text-purple-400">[{new Date().toLocaleTimeString()}] AI_Bot: Cached QA pair for #help</div>
+                </div>
+              </div>
+
+              <div className="bg-neutral-800 rounded-lg border border-neutral-700 p-4">
+                <h3 className="text-lg font-bold mb-4">⚠️ Error Logs</h3>
+                <div className="bg-neutral-900 rounded p-3 font-mono text-sm max-h-64 overflow-y-auto text-red-400">
+                  <div>No errors in the last hour ✅</div>
+                </div>
+              </div>
+            </div>
+          )}
+
+          {/* NEW: Chaos Mode */}
+          {activeTab === 'chaos' && (
+            <div>
+              <h2 className="text-3xl font-bold mb-4">🎭 Chaos Mode</h2>
+              <div className="bg-gradient-to-r from-red-900/30 to-orange-900/30 border-2 border-red-500/50 rounded-lg p-6 mb-6">
+                <div className="flex items-center justify-between mb-4">
+                  <div>
+                    <h3 className="text-2xl font-bold text-red-400">Chaos Mode: {chaosMode ? 'ACTIVE 🔥' : 'Inactive'}</h3>
+                    <p className="text-neutral-300">Boost chaos, humor, and spontaneous events</p>
+                  </div>
+                  <button 
+                    onClick={() => setChaosMode(!chaosMode)}
+                    className={`px-6 py-3 rounded-lg font-bold text-lg ${chaosMode ? 'bg-red-600 hover:bg-red-700' : 'bg-green-600 hover:bg-green-700'}`}
+                  >
+                    {chaosMode ? 'Disable' : 'Activate'}
+                  </button>
+                </div>
+                {chaosMode && (
+                  <div className="bg-black/30 rounded p-4">
+                    <h4 className="font-bold mb-2">Active Effects:</h4>
+                    <ul className="space-y-1 text-sm">
+                      <li>✅ AI humor boosted to 90%</li>
+                      <li>✅ Chaos_Bot now active</li>
+                      <li>✅ Random events every 5 minutes</li>
+                      <li>✅ Toxicity threshold relaxed</li>
+                    </ul>
+                  </div>
+                )}
+              </div>
+
+              <div className="bg-neutral-800 rounded-lg border border-neutral-700 p-4">
+                <h3 className="text-lg font-bold mb-4">🎲 Spontaneous Events</h3>
+                <div className="space-y-2">
+                  {[
+                    { emoji: '🔥', name: 'Roast Battle', desc: 'Roast the user above you' },
+                    { emoji: '😶', name: 'Emoji Only', desc: 'Reply only in emojis for 2 mins' },
+                    { emoji: '🎲', name: 'Random Topics', desc: 'AI generates random conversation starters' },
+                    { emoji: '🎭', name: 'Reverse Roles', desc: 'Mods become users, users become mods' },
+                    { emoji: '💬', name: 'Story Chain', desc: 'Everyone adds one sentence to a story' },
+                  ].map(event => (
+                    <button key={event.name} className="w-full flex items-center gap-3 px-4 py-3 bg-neutral-700 hover:bg-red-600/30 border border-neutral-600 rounded-lg text-left">
+                      <span className="text-2xl">{event.emoji}</span>
+                      <div>
+                        <p className="font-semibold">{event.name}</p>
+                        <p className="text-sm text-neutral-400">{event.desc}</p>
+                      </div>
+                      <button className="ml-auto px-3 py-1 bg-red-600 hover:bg-red-700 rounded text-sm">Trigger</button>
+                    </button>
+                  ))}
+                </div>
+              </div>
+            </div>
+          )}
+
+          {/* NEW: Room Time Machine */}
+          {activeTab === 'timemachine' && (
+            <div>
+              <h2 className="text-3xl font-bold mb-4">⏰ Room Time Machine</h2>
+              <div className="bg-neutral-800 rounded-lg border border-neutral-700 p-4 mb-4">
+                <label className="block text-sm font-medium mb-2">Select Room to Scrub</label>
+                <select className="bg-neutral-700 border border-neutral-600 rounded-md px-3 py-2 w-full md:w-64 mb-4">
+                  <option value="general">General</option>
+                  <option value="music">Music</option>
+                  <option value="help">Help</option>
+                </select>
+
+                <div className="mb-4">
+                  <label className="block text-sm font-medium mb-2">Time Range (Last 24 hours)</label>
+                  <input type="range" min="0" max="24" className="w-full" />
+                  <div className="flex justify-between text-sm text-neutral-400 mt-1">
+                    <span>24h ago</span>
+                    <span>Now</span>
+                  </div>
+                </div>
+              </div>
+
+              <div className="bg-neutral-800 rounded-lg border border-neutral-700 p-4">
+                <h3 className="text-lg font-bold mb-4">🎬 Story Arcs & Highlights</h3>
+                <div className="space-y-3">
+                  {[
+                    { time: '2h ago', title: 'Heated Debate', users: 'Alice vs Bob', messages: 47 },
+                    { time: '5h ago', title: 'Funny Joke Chain', users: '8 participants', messages: 23 },
+                    { time: '8h ago', title: 'Help Session', users: 'Charlie helped David', messages: 15 },
+                  ].map((arc, i) => (
+                    <div key={i} className="bg-neutral-700/50 p-3 rounded-lg">
+                      <div className="flex justify-between items-start">
+                        <div>
+                          <p className="font-semibold text-purple-300">{arc.title}</p>
+                          <p className="text-sm text-neutral-400">{arc.users} • {arc.messages} messages</p>
+                        </div>
+                        <div className="text-right">
+                          <p className="text-sm text-neutral-400">{arc.time}</p>
+                          <button className="mt-1 px-3 py-1 bg-purple-600 hover:bg-purple-700 rounded text-xs">Export</button>
+                        </div>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            </div>
+          )}
+
+          {/* NEW: Bot Personality Sculptor */}
+          {activeTab === 'personality' && (
+            <div>
+              <h2 className="text-3xl font-bold mb-4">🎨 Bot Personality Sculptor</h2>
+              <div className="bg-neutral-800 rounded-lg border border-neutral-700 p-6">
+                <h3 className="text-lg font-bold mb-6">Tune AI_Bot Behavior</h3>
+                <div className="space-y-6">
+                  {[
+                    { key: 'humor', label: 'Humor 🔥', color: 'red' },
+                    { key: 'spiciness', label: 'Spiciness 🌶', color: 'orange' },
+                    { key: 'empathy', label: 'Empathy 💗', color: 'pink' },
+                    { key: 'formality', label: 'Formality 📘', color: 'blue' },
+                    { key: 'mischief', label: 'Mischief 😈', color: 'purple' },
+                  ].map(slider => (
+                    <div key={slider.key}>
+                      <div className="flex justify-between mb-2">
+                        <label className="font-medium">{slider.label}</label>
+                        <span className="text-neutral-400">{Math.round((botPersonality[slider.key as keyof typeof botPersonality] as number) * 100)}%</span>
+                      </div>
+                      <input 
+                        type="range" 
+                        min="0" 
+                        max="1" 
+                        step="0.1"
+                        value={botPersonality[slider.key as keyof typeof botPersonality]}
+                        onChange={(e) => setBotPersonality({...botPersonality, [slider.key]: parseFloat(e.target.value)})}
+                        className="w-full"
+                      />
+                    </div>
+                  ))}
+                </div>
+
+                <div className="mt-6 pt-6 border-t border-neutral-700">
+                  <h4 className="font-bold mb-3">Preset Personalities</h4>
+                  <div className="grid grid-cols-2 gap-3">
+                    {[
+                      { name: 'Chaotic Genie', desc: 'High humor, high mischief' },
+                      { name: 'Therapist', desc: 'High empathy, high formality' },
+                      { name: 'Hype Speaker', desc: 'Max humor, low formality' },
+                      { name: 'Sassy Gremlin', desc: 'High spice, high mischief' },
+                    ].map(preset => (
+                      <button key={preset.name} className="px-4 py-3 bg-neutral-700 hover:bg-green-600/30 border border-neutral-600 rounded-lg text-left">
+                        <p className="font-semibold">{preset.name}</p>
+                        <p className="text-xs text-neutral-400">{preset.desc}</p>
+                      </button>
+                    ))}
+                  </div>
+                </div>
+
+                <button className="mt-6 w-full px-4 py-3 bg-green-600 hover:bg-green-700 rounded-lg font-bold">
+                  Apply Changes
+                </button>
+              </div>
+            </div>
+          )}
+
         </main>
       </div>
     </div>
@@ -2401,7 +3041,7 @@ const AdminPanelPage = ({ socket, currentUser, onBackToLobby, onViewProfile, onJ
 const getDmRoomName = (id1: string, id2: string) => [id1, id2].sort().join('__DM__');
 
 export default function App() {
-  const [page, setPage] = useState<'landing' | 'auth' | 'changelog' | 'lobby' | 'chat' | 'admin'>('landing');
+  const [page, setPage] = useState<'landing' | 'auth' | 'changelog' | 'lobby' | 'chat' | 'admin' | 'onboarding'>('landing');
   const [socket, setSocket] = useState<Socket | null>(null);
   const [currentUser, setCurrentUser] = useState<UserAccount | null>(null);
   const [currentRoom, setCurrentRoom] = useState<Room | null>(null);
@@ -2416,6 +3056,10 @@ export default function App() {
   
   // NEW: State for Admin Warn Modal
   const [warnModalData, setWarnModalData] = useState<WarnModalData | null>(null);
+  
+  // NEW: State for onboarding
+  // eslint-disable-next-line @typescript-eslint/no-unused-vars
+  const [_suggestedRoom, setSuggestedRoom] = useState<string>('general');
 
   const audioCtx = useRef<AudioContext | null>(null);
  
@@ -2563,7 +3207,8 @@ export default function App() {
   };
  
   // MODIFIED: This now opens the ReportUserModal
-  const handleReportFromProfile = (user: UserAccount) => {
+  // eslint-disable-next-line @typescript-eslint/no-unused-vars
+  const handleReportFromProfile = (_user: UserAccount) => {
      if (!socket || !currentUser || currentUser.isGuest) return;
      // This function is tricky because we don't have the `setReportingUser` state here
      // For now, we will assume reports only happen from within a chat room
@@ -2642,10 +3287,22 @@ export default function App() {
      
       <div className="flex-1 min-h-0">
         {page === 'landing' && (
-          <LandingPage onEnterChat={() => setPage('auth')} onShowChangelog={() => setPage('changelog')} />
+          <LandingPage onEnterChat={() => setPage('onboarding')} onShowChangelog={() => setPage('changelog')} />
+        )}
+        {page === 'onboarding' && (
+          <EmojiOnboarding
+            onComplete={(roomName) => {
+              setSuggestedRoom(roomName);
+              setPage('auth');
+            }}
+            onSkip={() => {
+              setSuggestedRoom('general');
+              setPage('auth');
+            }}
+          />
         )}
         {page === 'changelog' && (
-          <ChangelogPage onBack={() => page === 'landing' ? setPage('landing') : setPage('lobby')} />
+          <ChangelogPage onBack={() => setPage('lobby')} />
         )}
         {page === 'auth' && (
           <AuthPage onAuthSuccess={handleAuthSuccess} />

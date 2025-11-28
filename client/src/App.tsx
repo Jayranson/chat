@@ -1504,6 +1504,7 @@ function ChatApp({ socket, initialUser, initialRoom, onExit, onViewProfile, onWh
   // NEW: State for ChatRPG game
   const [showGame, setShowGame] = useState(false);
   const [gameMinimized, setGameMinimized] = useState(false);
+  const [gameExpanded, setGameExpanded] = useState(false);
 
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const typingTimeout = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -1765,12 +1766,43 @@ function ChatApp({ socket, initialUser, initialRoom, onExit, onViewProfile, onWh
       />
      
       <div className="flex flex-col md:flex-row flex-1 min-h-0">
-        {/* User List Panel */}
-        <div className={`bg-neutral-800 border-r border-neutral-700 ${isSummoned ? 'opacity-50 pointer-events-none' : ''} w-full md:w-64 p-4 flex flex-col overflow-y-auto`}>
-          <h2 className="text-xl font-semibold mb-3">Users <span className="text-sm font-normal text-neutral-400">({users.length})</span></h2>
-          <ul className="space-y-1">
+        {/* User List Panel - compact mode when game is expanded */}
+        <div className={`bg-neutral-800 border-r border-neutral-700 ${isSummoned ? 'opacity-50 pointer-events-none' : ''} ${gameExpanded ? 'w-16 p-2' : 'w-full md:w-64 p-4'} flex flex-col overflow-y-auto transition-all duration-300`}>
+          {!gameExpanded && <h2 className="text-xl font-semibold mb-3">Users <span className="text-sm font-normal text-neutral-400">({users.length})</span></h2>}
+          {gameExpanded && <h2 className="text-xs font-semibold mb-2 text-center text-neutral-400">{users.length}</h2>}
+          <ul className={`${gameExpanded ? 'space-y-2' : 'space-y-1'}`}>
             {users.map((user) => {
               const hasUnread = !!unreadCountsByUser[user.id];
+              
+              // Compact avatar-only view when game is expanded
+              if (gameExpanded) {
+                const initial = user.name.charAt(0).toUpperCase();
+                return (
+                  <li 
+                    key={user.id} 
+                    className={`relative flex justify-center ${hasUnread ? 'animate-pulse' : ''}`}
+                    onContextMenu={(e) => handleUserContextMenu(e, user)}
+                    title={user.name}
+                  >
+                    <div className={`w-10 h-10 rounded-full flex items-center justify-center text-sm font-bold ${
+                      user.role === 'admin' ? 'bg-blue-600' : 
+                      user.role === 'owner' ? 'bg-yellow-600' : 
+                      user.role === 'host' ? 'bg-gray-500' : 'bg-neutral-600'
+                    } ${hasUnread ? 'ring-2 ring-green-500' : ''}`}>
+                      {user.role === 'admin' && <span className="text-xs">👑</span>}
+                      {user.role !== 'admin' && initial}
+                    </div>
+                    <div className="absolute bottom-0 right-0">
+                      <StatusIndicator status={user.status} />
+                    </div>
+                    {hasUnread && (
+                      <span className="absolute top-0 right-0 w-2 h-2 bg-green-500 rounded-full animate-ping"></span>
+                    )}
+                  </li>
+                );
+              }
+              
+              // Normal view
               const userListItemClasses = [
                 'group flex items-center justify-between gap-2 p-2 rounded-md',
                 !isSummoned ? 'cursor-pointer hover:bg-neutral-700/50' : '',
@@ -1938,7 +1970,7 @@ function ChatApp({ socket, initialUser, initialRoom, onExit, onViewProfile, onWh
 
         {/* ChatRPG Game Panel - positioned to the right of chat */}
         {showGame && (
-          <div className="flex-shrink-0">
+          <div className={`flex-shrink-0 transition-all duration-300 ${gameExpanded ? 'absolute right-0 top-0 bottom-0 z-40' : ''}`}>
             <ChatRPG
               socket={socket}
               username={currentUser.username}
@@ -1948,6 +1980,9 @@ function ChatApp({ socket, initialUser, initialRoom, onExit, onViewProfile, onWh
               onClose={() => setShowGame(false)}
               onToggleSize={() => setGameMinimized(!gameMinimized)}
               isMinimized={gameMinimized}
+              isAdmin={currentUser.role === 'admin'}
+              onGameStateChange={(expanded) => setGameExpanded(expanded)}
+              chatMessages={messages.filter(m => m.type === 'user').slice(-10).map(m => ({ user: m.user, text: m.text }))}
             />
           </div>
         )}

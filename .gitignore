@@ -1,0 +1,41 @@
+# Dependencies
+node_modules/
+
+# Build outputs
+dist/
+build/
+
+# Environment files
+.env
+.env.local
+.env.*.local
+
+# Database
+*.db
+*.db-journal
+
+# Uploads (keep directory, ignore contents)
+uploads/*
+!uploads/.gitkeep
+
+# IDE
+.vscode/
+.idea/
+
+# Logs
+*.log
+npm-debug.log*
+
+# Test coverage
+coverage/
+
+# Playwright
+playwright-report/
+test-results/
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Prisma
+server/prisma/migrations/

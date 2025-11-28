@@ -13,18 +13,27 @@ const __dirname = path.dirname(__filename);
 const app = express();
 const server = http.createServer(app);
 
-// Production server URL (configurable via environment variable)
-const SERVER_URL = process.env.SERVER_URL || "http://100.115.92.204:4000";
-
-const corsOptions = {
-  origin: [
+// Server configuration (via environment variables)
+const PORT = process.env.PORT || 4000;
+const ALLOWED_ORIGINS = process.env.ALLOWED_ORIGINS 
+  ? process.env.ALLOWED_ORIGINS.split(',') 
+  : [
     "http://localhost:3000", 
     "http://localhost:5173", 
-    "http://localhost:5174",
-    "http://100.115.92.204:4000",
-    "http://100.115.92.204",
-    SERVER_URL
-  ],
+    "http://localhost:5174"
+  ];
+
+const corsOptions = {
+  origin: (origin, callback) => {
+    // Allow requests with no origin (like mobile apps or curl)
+    if (!origin) return callback(null, true);
+    // Allow all localhost and configured origins
+    if (origin.includes('localhost') || origin.includes('127.0.0.1') || ALLOWED_ORIGINS.includes(origin)) {
+      return callback(null, true);
+    }
+    // In production, allow same-origin requests
+    callback(null, true);
+  },
   methods: ["GET", "POST"],
   credentials: true
 };
@@ -1046,20 +1055,21 @@ const getAdminRoomContext = (adminId) => {
   return context.roomName;
 };
 
-// Find user by username (case-insensitive)
-const findUserByUsername = (username) => {
-  const lowerUsername = username.toLowerCase().trim();
-  // Check online users first
-  for (const [socketId, user] of Object.entries(onlineUsers)) {
-    if (user.username.toLowerCase() === lowerUsername) {
-      return { ...user, socketId };
-    }
+// Find user by username (case-insensitive) - used by admin commands
+const findUserByUsernameForAdmin = (username) => {
+  const normalizedUsername = username.toLowerCase().trim();
+  const onlineSocketId = Object.keys(onlineUsers).find(socketId => 
+    onlineUsers[socketId].username.toLowerCase() === normalizedUsername
+  );
+  if (onlineSocketId) {
+    return { ...onlineUsers[onlineSocketId], socketId: onlineSocketId };
   }
-  // Check user accounts
-  for (const [id, account] of Object.entries(userAccounts)) {
-    if (account.username.toLowerCase() === lowerUsername) {
-      return { ...account, id };
-    }
+  const account = Object.values(userAccounts).find(u => 
+    u.username.toLowerCase() === normalizedUsername
+  );
+  if (account) {
+    const { password, ...safeAccount } = account;
+    return { ...safeAccount, isGuest: account.isGuest, socketId: null };
   }
   return null;
 };
@@ -1114,7 +1124,7 @@ const handleAdminCommand = (inputText, dmRoomName, admin, adminSocket) => {
       return `📋 **Kick Command**\n\nTo kick a user, say: "kick [username]"\n\nI'll remove them from **${contextRoom}**. Who would you like me to kick?`;
     }
     
-    const targetUser = findUserByUsername(targetUsername);
+    const targetUser = findUserByUsernameForAdmin(targetUsername);
     if (!targetUser) {
       return `❌ I couldn't find a user named "${targetUsername}". Please check the spelling and try again.`;
     }
@@ -1147,7 +1157,7 @@ const handleAdminCommand = (inputText, dmRoomName, admin, adminSocket) => {
       return `📋 **Ban Command**\n\nTo ban a user, say: "ban [username]"\n\nI'll ban them from the entire server. Who would you like me to ban?`;
     }
     
-    const targetUser = findUserByUsername(targetUsername);
+    const targetUser = findUserByUsernameForAdmin(targetUsername);
     if (!targetUser) {
       return `❌ I couldn't find a user named "${targetUsername}". Please check the spelling and try again.`;
     }
@@ -1185,7 +1195,7 @@ const handleAdminCommand = (inputText, dmRoomName, admin, adminSocket) => {
       return `📋 **Mute Command**\n\nTo mute a user, say: "mute [username]"\n\nI'll mute them in **${contextRoom}**. Who would you like me to mute?`;
     }
     
-    const targetUser = findUserByUsername(targetUsername);
+    const targetUser = findUserByUsernameForAdmin(targetUsername);
     if (!targetUser) {
       return `❌ I couldn't find a user named "${targetUsername}". Please check the spelling and try again.`;
     }
@@ -1216,7 +1226,7 @@ const handleAdminCommand = (inputText, dmRoomName, admin, adminSocket) => {
       return `📋 **Unmute Command**\n\nTo unmute a user, say: "unmute [username]"\n\nWho would you like me to unmute?`;
     }
     
-    const targetUser = findUserByUsername(targetUsername);
+    const targetUser = findUserByUsernameForAdmin(targetUsername);
     if (!targetUser) {
       return `❌ I couldn't find a user named "${targetUsername}". Please check the spelling and try again.`;
     }
@@ -1301,12 +1311,12 @@ const handleAdminCommand = (inputText, dmRoomName, admin, adminSocket) => {
       return `📋 **User Info Command**\n\nTo check a user's status, say: "user status [username]" or "info on [username]"\n\nWho would you like information about?`;
     }
     
-    const targetUser = findUserByUsername(targetUsername);
+    const targetUser = findUserByUsernameForAdmin(targetUsername);
     if (!targetUser) {
       return `❌ I couldn't find a user named "${targetUsername}".`;
     }
     
-    const behavior = userBehavior.get(targetUser.id) || { score: 0, warnings: 0 };
+    const behavior = userBehaviorTracking.get(targetUser.id) || { score: 0, warnings: 0 };
     const isBanned = bannedUserIds.has(targetUser.id);
     const isOnline = Object.values(onlineUsers).some(u => u.id === targetUser.id);
     
@@ -2790,7 +2800,7 @@ io.on("connection", (socket) => {
           if (!targetUsername) {
             return sendSystemMessageToSocket(socket.id, room, "Usage: /bot kick <username>");
           }
-          const targetUser = findUserByUsername(targetUsername);
+          const targetUser = findUserByUsernameForAdmin(targetUsername);
           if (!targetUser || !targetUser.socketId) {
             return sendSystemMessageToSocket(socket.id, room, `User "${targetUsername}" is not online.`);
           }
@@ -2814,7 +2824,7 @@ io.on("connection", (socket) => {
           if (!targetUsername) {
             return sendSystemMessageToSocket(socket.id, room, "Usage: /bot ban <username>");
           }
-          const targetUser = findUserByUsername(targetUsername);
+          const targetUser = findUserByUsernameForAdmin(targetUsername);
           if (!targetUser) {
              return sendSystemMessageToSocket(socket.id, room, `User account "${targetUsername}" not found.`);
           }
@@ -2840,7 +2850,7 @@ io.on("connection", (socket) => {
           if (!roleToPromote || !targetUsername || roleToPromote.toLowerCase() !== 'host') {
             return sendSystemMessageToSocket(socket.id, room, "Usage: /bot promote host <username>");
           }
-          const targetUser = findUserByUsername(targetUsername);
+          const targetUser = findUserByUsernameForAdmin(targetUsername);
           if (!targetUser || !targetUser.socketId) {
             return sendSystemMessageToSocket(socket.id, room, `User "${targetUsername}" is not online.`);
           }
@@ -2861,7 +2871,7 @@ io.on("connection", (socket) => {
           if (!targetUsername) {
             return sendSystemMessageToSocket(socket.id, room, "Usage: /bot demote <username>");
           }
-          const targetUser = findUserByUsername(targetUsername);
+          const targetUser = findUserByUsernameForAdmin(targetUsername);
           if (!targetUser) {
              return sendSystemMessageToSocket(socket.id, room, `User "${targetUsername}" not found.`);
           }
@@ -2972,5 +2982,4 @@ app.get("*", (req, res) => {
   });
 });
 
-const PORT = process.env.PORT || 4000;
 server.listen(PORT, () => console.log(`✅ ChatNet server running on port ${PORT}`));

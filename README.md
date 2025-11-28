@@ -124,10 +124,23 @@ ALLOWED_ORIGINS=http://localhost:3000,http://localhost:5173
 
 The app includes face-based age verification to comply with UK regulations:
 
+### Webcam Verification (Desktop)
 1. **Local Processing**: All face detection runs in the browser
 2. **Privacy**: No images or facial data are stored or transmitted
 3. **Accuracy**: Uses multiple readings for reliable estimation
 4. **Compliance**: Meets UK Online Safety Act requirements for 18+ platforms
+
+### QR Code Mobile Verification (No Webcam)
+For users without a webcam on their PC/laptop:
+1. Click "No webcam? Verify with mobile phone" button
+2. Scan the QR code displayed on screen with your mobile phone
+3. Complete face verification on your mobile device
+4. Desktop automatically progresses once mobile verification is complete
+
+The QR code flow uses a session-based system:
+- Sessions expire after 10 minutes
+- Desktop polls server for verification status
+- Mobile notifies server when verification completes
 
 To skip age verification (for testing):
 - Click "Skip verification" on the age verification page

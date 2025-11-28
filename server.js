@@ -1725,8 +1725,129 @@ app.post("/submit-ticket", (req, res) => {
   }
 });
 
-// --- Age Verification API Route ---
-// Records age verification status for a user
+// --- Age Verification API Routes ---
+
+// In-memory storage for mobile verification sessions
+const verificationSessions = new Map();
+
+// Create a new verification session (for QR code flow)
+app.post("/api/verify-age/session", (req, res) => {
+  try {
+    const { sessionId } = req.body;
+    
+    if (!sessionId) {
+      return res.status(400).json({ error: "Session ID is required" });
+    }
+    
+    // Store session with pending status
+    verificationSessions.set(sessionId, {
+      status: 'pending',
+      verified: null,
+      createdAt: new Date().toISOString(),
+      expiresAt: new Date(Date.now() + 10 * 60 * 1000).toISOString() // 10 min expiry
+    });
+    
+    console.log(`Age verification session created`);
+    
+    res.status(200).json({ success: true, sessionId });
+    
+  } catch (error) {
+    console.error("Error creating verification session:", error);
+    res.status(500).json({ error: "Server error creating session" });
+  }
+});
+
+// Get verification session status (polled by desktop)
+app.get("/api/verify-age/status/:sessionId", (req, res) => {
+  try {
+    const { sessionId } = req.params;
+    
+    const session = verificationSessions.get(sessionId);
+    
+    if (!session) {
+      return res.status(404).json({ error: "Session not found", status: 'not_found' });
+    }
+    
+    // Check if session expired
+    if (new Date() > new Date(session.expiresAt)) {
+      verificationSessions.delete(sessionId);
+      return res.status(410).json({ error: "Session expired", status: 'expired' });
+    }
+    
+    res.status(200).json({
+      status: session.status,
+      verified: session.verified
+    });
+    
+  } catch (error) {
+    console.error("Error getting verification status:", error);
+    res.status(500).json({ error: "Server error" });
+  }
+});
+
+// Update verification session from mobile
+app.post("/api/verify-age/complete/:sessionId", (req, res) => {
+  try {
+    const { sessionId } = req.params;
+    const { verified } = req.body;
+    
+    const session = verificationSessions.get(sessionId);
+    
+    if (!session) {
+      return res.status(404).json({ error: "Session not found" });
+    }
+    
+    // Check if session expired
+    if (new Date() > new Date(session.expiresAt)) {
+      verificationSessions.delete(sessionId);
+      return res.status(410).json({ error: "Session expired" });
+    }
+    
+    // Update session with verification result
+    session.status = 'completed';
+    session.verified = verified;
+    session.completedAt = new Date().toISOString();
+    verificationSessions.set(sessionId, session);
+    
+    console.log(`Mobile age verification completed: ${verified ? 'PASSED' : 'FAILED'}`);
+    
+    res.status(200).json({ 
+      success: true, 
+      verified,
+      message: verified ? "Age verification successful" : "Age verification failed"
+    });
+    
+  } catch (error) {
+    console.error("Error completing verification:", error);
+    res.status(500).json({ error: "Server error" });
+  }
+});
+
+// Mark session as scanning (QR code was scanned on mobile)
+app.post("/api/verify-age/scan/:sessionId", (req, res) => {
+  try {
+    const { sessionId } = req.params;
+    
+    const session = verificationSessions.get(sessionId);
+    
+    if (!session) {
+      return res.status(404).json({ error: "Session not found" });
+    }
+    
+    session.status = 'scanning';
+    verificationSessions.set(sessionId, session);
+    
+    console.log(`QR code scanned for verification session`);
+    
+    res.status(200).json({ success: true, status: 'scanning' });
+    
+  } catch (error) {
+    console.error("Error updating scan status:", error);
+    res.status(500).json({ error: "Server error" });
+  }
+});
+
+// Records age verification status for a user (original endpoint)
 app.post("/api/verify-age", (req, res) => {
   try {
     const { userId, verified } = req.body;

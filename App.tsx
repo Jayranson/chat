@@ -197,7 +197,7 @@ const IconShield = () => (
   </svg>
 );
 // eslint-disable-next-line @typescript-eslint/no-unused-vars
-const IconBarChart = () => (
+const _IconBarChart = () => (
   <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
     <line x1="12" y1="20" x2="12" y2="10"></line>
     <line x1="18" y1="20" x2="18" y2="4"></line>
@@ -485,7 +485,7 @@ const EmojiOnboarding = ({ onComplete, onSkip }: EmojiOnboardingProps) => {
 // --- Landing Page ---
 type LandingPageProps = { onEnterChat: () => void; onShowChangelog: () => void; };
 // eslint-disable-next-line @typescript-eslint/no-unused-vars
-const LandingPage = ({ onEnterChat, onShowChangelog }: LandingPageProps) => (
+const _LandingPage = ({ onEnterChat, _onShowChangelog }: LandingPageProps & { _onShowChangelog?: () => void }) => (
   <div className="min-h-screen flex flex-col items-center justify-center p-8 bg-neutral-900 text-white">
     <div className="text-center max-w-4xl mx-auto">
       <h1 className="text-5xl md:text-7xl font-bold mb-6">
@@ -1085,7 +1085,7 @@ const MessageLimitModal = ({ onRegister }: MessageLimitModalProps) => (
 
 type RulesModalProps = { onAccept: () => void; };
 // eslint-disable-next-line @typescript-eslint/no-unused-vars
-const RulesModal = ({ onAccept }: RulesModalProps) => (
+const _RulesModal = ({ onAccept }: RulesModalProps) => (
   <div className="fixed inset-0 z-50 flex items-center justify-center bg-black bg-opacity-50">
     <div className="w-full max-w-lg p-6 rounded-lg shadow-lg bg-neutral-800 text-white">
       <h2 className="text-2xl font-bold text-center mb-4">Wibali Rules & Guidelines</h2>
@@ -2008,7 +2008,7 @@ function DirectMessageModalContent({ socket, initialUser, initialRoom, onClose, 
   const deleteMessage = (id: string) => socket.emit("delete message", { id });
   const addEmoji = (emoji: string) => setNewMessage((prev) => prev + emoji);
   // eslint-disable-next-line @typescript-eslint/no-unused-vars
-  const handleIgnoreUser = (userId: string) => setIgnoredUsers((prev) => prev.includes(userId) ? prev.filter((id) => id !== userId) : [...prev, userId]);
+  const _handleIgnoreUser = (userId: string) => setIgnoredUsers((prev) => prev.includes(userId) ? prev.filter((id) => id !== userId) : [...prev, userId]);
  
   // MODIFIED: Added global mute check
   const isInputDisabled = !socket.connected || showLimitModal || currentUser.isGloballyMuted;
@@ -2328,7 +2328,7 @@ const AdminPanelPage = ({ socket, currentUser, onBackToLobby, onViewProfile, onJ
     topicBias: 'general'
   });
   // eslint-disable-next-line @typescript-eslint/no-unused-vars
-  const [systemStats, setSystemStats] = useState({
+  const [_systemStats, _setSystemStats] = useState({
     uptime: 0,
     messageCount: 0,
     connections: 0,
@@ -2375,7 +2375,7 @@ const AdminPanelPage = ({ socket, currentUser, onBackToLobby, onViewProfile, onJ
 
   // --- User Actions ---
   // eslint-disable-next-line @typescript-eslint/no-unused-vars
-  const handleSetRole = (targetUserId: string, role: 'admin' | 'user') => {
+  const _handleSetRole = (targetUserId: string, role: 'admin' | 'user') => {
     if (currentUser.id === targetUserId) return;
     socket.emit("admin:setRole", { targetUserId, role });
   };
@@ -3057,7 +3057,7 @@ export default function App() {
   
   // NEW: State for onboarding
   // eslint-disable-next-line @typescript-eslint/no-unused-vars
-  const [suggestedRoom, setSuggestedRoom] = useState<string>('general');
+  const [_suggestedRoom, setSuggestedRoom] = useState<string>('general');
 
   const audioCtx = useRef<AudioContext | null>(null);
  

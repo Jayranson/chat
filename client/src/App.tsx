@@ -1403,7 +1403,10 @@ const LobbyPage = ({
                         isUnread ? 'bg-green-600 hover:bg-green-700' : 'bg-neutral-800 border border-neutral-700 hover:bg-neutral-700/50'
                       }`}
                     >
-                      <span className="text-lg font-medium">💬 {getDMDisplayName(room)}</span>
+                      <span className={`text-lg font-medium ${isUnread ? 'animate-pulse' : ''}`}>
+                        💬 {getDMDisplayName(room)}
+                        {isUnread && <span className="ml-2 inline-block w-3 h-3 bg-white rounded-full animate-ping"></span>}
+                      </span>
                       <span onClick={(e) => handleHideDM(e, room.name)} className="text-neutral-500 hover:text-white opacity-0 group-hover:opacity-100 p-1 rounded-full">
                         <IconX />
                       </span>
@@ -1763,8 +1766,22 @@ function ChatApp({ socket, initialUser, initialRoom, onExit, onViewProfile, onWh
           <ul className="space-y-1">
             {users.map((user) => {
               const hasUnread = !!unreadCountsByUser[user.id];
+              const userListItemClasses = [
+                'group flex items-center justify-between gap-2 p-2 rounded-md',
+                !isSummoned ? 'cursor-pointer hover:bg-neutral-700/50' : '',
+                user.isSummoned ? 'opacity-50 text-neutral-500' : '',
+                user.isSpectating ? 'opacity-60' : '',
+                hasUnread ? 'bg-green-900/30 border border-green-500/50' : ''
+              ].filter(Boolean).join(' ');
+              
+              const userNameClasses = [
+                'truncate',
+                user.isSpectating ? 'line-through' : '',
+                hasUnread ? 'text-green-400 font-bold animate-pulse' : ''
+              ].filter(Boolean).join(' ');
+              
               return (
-                <li key={user.id} className={`group flex items-center justify-between gap-2 p-2 rounded-md ${!isSummoned ? 'cursor-pointer hover:bg-neutral-700/50' : ''} ${user.isSummoned ? 'opacity-50 text-neutral-500' : ''} ${user.isSpectating ? 'opacity-60' : ''}`}
+                <li key={user.id} className={userListItemClasses}
                   onContextMenu={(e) => handleUserContextMenu(e, user)}
                 >
                   <div className="flex items-center gap-2 overflow-hidden">
@@ -1773,11 +1790,11 @@ function ChatApp({ socket, initialUser, initialRoom, onExit, onViewProfile, onWh
                     </div>
 
                     {hasUnread && (
-                      <span className="w-2.5 h-2.5 bg-green-500 rounded-full animate-pulse flex-shrink-0" title="Unread Whisper"></span>
+                      <span className="w-2.5 h-2.5 bg-green-500 rounded-full animate-ping flex-shrink-0" title="Unread Whisper"></span>
                     )}
 
                     <UserBadge role={user.role} username={user.name} />
-                    <span className={`truncate ${user.isSpectating ? 'line-through' : ''}`}>{user.name}</span>
+                    <span className={userNameClasses}>{user.name}</span>
                     {user.id === currentUser?.id && (<span className="text-xs text-blue-400">(You)</span>)}
                   </div>
                   {user.typing && (<span className="text-sm italic text-neutral-400 flex-shrink-0">typing...</span>)}

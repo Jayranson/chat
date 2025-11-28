@@ -117,19 +117,26 @@ const AgeVerification: React.FC<AgeVerificationProps> = ({
       
       streamRef.current = stream;
       
-      if (videoRef.current) {
-        videoRef.current.srcObject = stream;
-        await videoRef.current.play();
-      }
-      
+      // Set state first to ensure video element is rendered
       setState('detecting');
       setProgress('Position your face in the frame');
+      
     } catch (err) {
       console.error('Camera error:', err);
       setError('Camera access denied. Please allow camera access and try again.');
       setState('error');
     }
   }, []);
+
+  // Effect to attach stream to video element when in detecting state
+  useEffect(() => {
+    if (state === 'detecting' && streamRef.current && videoRef.current) {
+      videoRef.current.srcObject = streamRef.current;
+      videoRef.current.play().catch(err => {
+        console.error('Error playing video:', err);
+      });
+    }
+  }, [state]);
 
   // Stop camera
   const stopCamera = useCallback(() => {

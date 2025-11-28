@@ -1729,14 +1729,14 @@ app.post("/submit-ticket", (req, res) => {
 // Records age verification status for a user
 app.post("/api/verify-age", (req, res) => {
   try {
-    const { userId, verified, estimatedAge } = req.body;
+    const { userId, verified } = req.body;
     
     if (!userId) {
       return res.status(400).json({ error: "User ID is required" });
     }
     
-    // Log age verification for compliance audit trail
-    console.log(`Age verification: User ${userId} - Verified: ${verified}, Estimated Age: ${estimatedAge}`);
+    // Log age verification (anonymized - no age data logged for privacy)
+    console.log(`Age verification completed for user: ${verified ? 'PASSED' : 'FAILED'}`);
     
     // Update user account if exists
     if (userAccounts[userId]) {

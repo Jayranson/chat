@@ -29,7 +29,9 @@ interface DetectionResult {
 }
 
 // Model URLs - using jsdelivr CDN for face-api models
-const MODEL_URL = 'https://cdn.jsdelivr.net/npm/@vladmandic/face-api@1.7.13/model';
+// Can be overridden via environment variable VITE_FACE_API_MODEL_URL
+const MODEL_URL = import.meta.env.VITE_FACE_API_MODEL_URL || 
+  'https://cdn.jsdelivr.net/npm/@vladmandic/face-api@1.7.13/model';
 
 const AgeVerification: React.FC<AgeVerificationProps> = ({ 
   onVerified, 

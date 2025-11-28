@@ -196,6 +196,7 @@ const IconShield = () => (
     <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"></path>
   </svg>
 );
+// eslint-disable-next-line @typescript-eslint/no-unused-vars
 const IconBarChart = () => (
   <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
     <line x1="12" y1="20" x2="12" y2="10"></line>
@@ -260,22 +261,22 @@ const IconFileText = () => (
 // --- Badge SVGs ---
 // (All existing badge SVGs are included here... AdminBadge, GoldenCrown, etc.)
 const AdminBadge = () => (
-  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor" className="w-5 h-5 text-blue-500" title="Administrator">
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor" className="w-5 h-5 text-blue-500" aria-label="Administrator">
     <path fillRule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm3.707-9.293a1 1 0 00-1.414-1.414L9 10.586 7.707 9.293a1 1 0 00-1.414 1.414l2 2a1 1 0 001.414 0l4-4z" clipRule="evenodd" />
   </svg>
 );
 const GoldenCrown = () => (
-  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor" className="w-5 h-5 text-yellow-400" title="Room Owner">
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor" className="w-5 h-5 text-yellow-400" aria-label="Room Owner">
     <path fillRule="evenodd" d="M10 2a.75.75 0 01.682.433l1.838 3.997 4.494.598a.75.75 0 01.418 1.28l-3.29 3.148 0.81 4.453a.75.75 0 01-1.09.791L10 14.128l-4.062 2.136a.75.75 0 01-1.09-.79l0.81-4.453-3.29-3.148a.75.75 0 01.418-1.28l4.494-.598L9.318 2.433A.75.75 0 0110 2z" clipRule="evenodd" />
   </svg>
 );
 const SilverCrown = () => (
-  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor" className="w-5 h-5 text-gray-400" title="Room Host">
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor" className="w-5 h-5 text-gray-400" aria-label="Room Host">
     <path d="M10 2a.75.75 0 01.682.433l1.838 3.997 4.494.598a.75.75 0 01.418 1.28l-3.29 3.148 0.81 4.453a.75.75 0 01-1.09.791L10 14.128l-4.062 2.136a.75.75 0 01-1.09-.79l0.81-4.453-3.29-3.148a.75.75 0 01.418-1.28l4.494-.598L9.318 2.433A.75.75 0 0110 2z" />
   </svg>
 );
 const BotBadge = () => (
-  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor" className="w-5 h-5 text-purple-400" title="AI Bot">
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor" className="w-5 h-5 text-purple-400" aria-label="AI Bot">
     <path fillRule="evenodd" d="M11.01 3.05C11.346 2.409 12.163 2 13 2h1a2 2 0 0 1 2 2v2.115c0 .546.224 1.07.618 1.464l2.064 2.064a1.5 1.5 0 0 1 .439 1.061V13a2 2 0 0 1-2 2h-1c-.837 0-1.654-.409-1.99.24S11.166 18 10.32 18H9.68c-.846 0-1.663.409-1.99.24s-1.155-1.58-1.99-2.24H5a2 2 0 0 1-2-2v-.296a1.5 1.5 0 0 1 .439-1.06L5.503 7.643A1.5 1.5 0 0 0 6.12 6.182V4a2 2 0 0 1 2-2h1c.837 0 1.654.409 1.99-.24S10.163 2 11.008 2h.002ZM10 6a2 2 0 1 0 0 4 2 2 0 0 0 0-4Z" clipRule="evenodd" />
   </svg>
 );
@@ -483,6 +484,7 @@ const EmojiOnboarding = ({ onComplete, onSkip }: EmojiOnboardingProps) => {
 
 // --- Landing Page ---
 type LandingPageProps = { onEnterChat: () => void; onShowChangelog: () => void; };
+// eslint-disable-next-line @typescript-eslint/no-unused-vars
 const LandingPage = ({ onEnterChat, onShowChangelog }: LandingPageProps) => (
   <div className="min-h-screen flex flex-col items-center justify-center p-8 bg-neutral-900 text-white">
     <div className="text-center max-w-4xl mx-auto">
@@ -1082,6 +1084,7 @@ const MessageLimitModal = ({ onRegister }: MessageLimitModalProps) => (
 );
 
 type RulesModalProps = { onAccept: () => void; };
+// eslint-disable-next-line @typescript-eslint/no-unused-vars
 const RulesModal = ({ onAccept }: RulesModalProps) => (
   <div className="fixed inset-0 z-50 flex items-center justify-center bg-black bg-opacity-50">
     <div className="w-full max-w-lg p-6 rounded-lg shadow-lg bg-neutral-800 text-white">
@@ -1179,7 +1182,7 @@ type LobbyPageProps = {
   onGoToAdmin: () => void;
 };
 const LobbyPage = ({
-  socket, currentUser, onJoinRoom, onJoinDM, onShowChangelog, onViewProfile, onLogout, unreadDMNames, onClearUnreadDMs, onWhisper, onGoToAdmin
+  socket, currentUser, onJoinRoom, onJoinDM, onShowChangelog, onViewProfile, onLogout, unreadDMNames, onClearUnreadDMs, onWhisper: _onWhisper, onGoToAdmin
 }: LobbyPageProps) => {
   const [publicRooms, setPublicRooms] = useState<Room[]>([]);
   const [myRooms, setMyRooms] = useState<Room[]>([]);
@@ -1193,7 +1196,7 @@ const LobbyPage = ({
 
   const initAudio = () => { if (!audioCtx.current) { try { audioCtx.current = new (window.AudioContext || (window as any).webkitAudioContext)(); audioCtx.current?.resume(); } catch (e) { console.error("Web Audio API not supported", e); } } };
  
-  const playSound = (type: 'notify') => {
+  const playSound = (_type: 'notify') => {
     if (!settings.enableSounds || !audioCtx.current) return;
     const ctx = audioCtx.current; if (ctx.state === 'suspended') { ctx.resume(); }
     const oscillator = ctx.createOscillator(); const gainNode = ctx.createGain();
@@ -1464,7 +1467,7 @@ type ChatAppProps = {
   unreadDMNames: string[];
 };
 function ChatApp({ socket, initialUser, initialRoom, onExit, onViewProfile, onWhisper, unreadCount, unreadDMNames }: ChatAppProps) {
-  const [connected, setConnected] = useState(socket.connected);
+  const [_connected, setConnected] = useState(socket.connected);
   const [messages, setMessages] = useState<Message[]>([]);
   const [users, setUsers] = useState<User[]>([]);
   const [newMessage, setNewMessage] = useState("");
@@ -1493,7 +1496,7 @@ function ChatApp({ socket, initialUser, initialRoom, onExit, onViewProfile, onWh
   const [unreadCountsByUser, setUnreadCountsByUser] = useState<Record<string, number>>({});
 
   const messagesEndRef = useRef<HTMLDivElement>(null);
-  const typingTimeout = useRef<NodeJS.Timeout | null>(null);
+  const typingTimeout = useRef<ReturnType<typeof setTimeout> | null>(null);
   const audioCtx = useRef<AudioContext | null>(null);
   const settingsRef = useRef<UserSettings>({ enableSounds: true, enableWhispers: true });
 
@@ -1689,7 +1692,7 @@ function ChatApp({ socket, initialUser, initialRoom, onExit, onViewProfile, onWh
   return (
     <div
       className={`bg-neutral-900 text-white h-full flex flex-col font-sans overflow-hidden ${isSummoned ? 'border-4 border-red-500' : ''}`}
-      onClick={(e) => { closeContextMenu(); setShowEmojiPicker(false); }}
+      onClick={() => { closeContextMenu(); setShowEmojiPicker(false); }}
     >
       <style>{`
         .no-scrollbar::-webkit-scrollbar { display: none; } 
@@ -1914,8 +1917,8 @@ type DirectMessageModalContentProps = {
   onClose: () => void;
   onViewProfile: (user: User) => void;
 };
-function DirectMessageModalContent({ socket, initialUser, initialRoom, onClose, onViewProfile }: DirectMessageModalContentProps) {
-  const [connected, setConnected] = useState(socket.connected);
+function DirectMessageModalContent({ socket, initialUser, initialRoom, onClose, onViewProfile: _onViewProfile }: DirectMessageModalContentProps) {
+  const [_connected, setConnected] = useState(socket.connected);
   const [messages, setMessages] = useState<Message[]>([]);
   const [newMessage, setNewMessage] = useState("");
   const [currentUser, setCurrentUser] = useState<UserAccount>(initialUser);
@@ -1931,7 +1934,7 @@ function DirectMessageModalContent({ socket, initialUser, initialRoom, onClose, 
   const isAdminWhisper = otherUser.role === 'admin';
 
   const messagesEndRef = useRef<HTMLDivElement>(null);
-  const typingTimeout = useRef<NodeJS.Timeout | null>(null);
+  const typingTimeout = useRef<ReturnType<typeof setTimeout> | null>(null);
   const audioCtx = useRef<AudioContext | null>(null);
   const settingsRef = useRef<UserSettings>({ enableSounds: true, enableWhispers: true });
 
@@ -2004,6 +2007,7 @@ function DirectMessageModalContent({ socket, initialUser, initialRoom, onClose, 
   };
   const deleteMessage = (id: string) => socket.emit("delete message", { id });
   const addEmoji = (emoji: string) => setNewMessage((prev) => prev + emoji);
+  // eslint-disable-next-line @typescript-eslint/no-unused-vars
   const handleIgnoreUser = (userId: string) => setIgnoredUsers((prev) => prev.includes(userId) ? prev.filter((id) => id !== userId) : [...prev, userId]);
  
   // MODIFIED: Added global mute check
@@ -2323,6 +2327,7 @@ const AdminPanelPage = ({ socket, currentUser, onBackToLobby, onViewProfile, onJ
     mischief: 0.3,
     topicBias: 'general'
   });
+  // eslint-disable-next-line @typescript-eslint/no-unused-vars
   const [systemStats, setSystemStats] = useState({
     uptime: 0,
     messageCount: 0,
@@ -2369,6 +2374,7 @@ const AdminPanelPage = ({ socket, currentUser, onBackToLobby, onViewProfile, onJ
   }, [socket]);
 
   // --- User Actions ---
+  // eslint-disable-next-line @typescript-eslint/no-unused-vars
   const handleSetRole = (targetUserId: string, role: 'admin' | 'user') => {
     if (currentUser.id === targetUserId) return;
     socket.emit("admin:setRole", { targetUserId, role });
@@ -2981,7 +2987,7 @@ const AdminPanelPage = ({ socket, currentUser, onBackToLobby, onViewProfile, onJ
                     <div key={slider.key}>
                       <div className="flex justify-between mb-2">
                         <label className="font-medium">{slider.label}</label>
-                        <span className="text-neutral-400">{Math.round(botPersonality[slider.key as keyof typeof botPersonality] * 100)}%</span>
+                        <span className="text-neutral-400">{Math.round((botPersonality[slider.key as keyof typeof botPersonality] as number) * 100)}%</span>
                       </div>
                       <input 
                         type="range" 
@@ -3050,6 +3056,7 @@ export default function App() {
   const [warnModalData, setWarnModalData] = useState<WarnModalData | null>(null);
   
   // NEW: State for onboarding
+  // eslint-disable-next-line @typescript-eslint/no-unused-vars
   const [suggestedRoom, setSuggestedRoom] = useState<string>('general');
 
   const audioCtx = useRef<AudioContext | null>(null);
@@ -3198,7 +3205,8 @@ export default function App() {
   };
  
   // MODIFIED: This now opens the ReportUserModal
-  const handleReportFromProfile = (user: UserAccount) => {
+  // eslint-disable-next-line @typescript-eslint/no-unused-vars
+  const handleReportFromProfile = (_user: UserAccount) => {
      if (!socket || !currentUser || currentUser.isGuest) return;
      // This function is tricky because we don't have the `setReportingUser` state here
      // For now, we will assume reports only happen from within a chat room
@@ -3292,7 +3300,7 @@ export default function App() {
           />
         )}
         {page === 'changelog' && (
-          <ChangelogPage onBack={() => page === 'landing' ? setPage('landing') : setPage('lobby')} />
+          <ChangelogPage onBack={() => setPage('lobby')} />
         )}
         {page === 'auth' && (
           <AuthPage onAuthSuccess={handleAuthSuccess} />

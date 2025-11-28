@@ -1,0 +1,32 @@
+{
+  "name": "chat-app",
+  "version": "1.0.0",
+  "description": "Real-time chat application with TypeScript backend and React frontend",
+  "scripts": {
+    "dev": "concurrently \"npm run dev:server\" \"npm run dev:web\"",
+    "dev:server": "cd server && npm run dev",
+    "dev:web": "cd web && npm run dev",
+    "build": "npm run build:server && npm run build:web",
+    "build:server": "cd server && npm run build",
+    "build:web": "cd web && npm run build",
+    "start": "cd server && npm start",
+    "test": "cd server && npm test",
+    "e2e": "cd e2e && npm test",
+    "lint": "npm run lint:server && npm run lint:web",
+    "lint:server": "cd server && npm run lint",
+    "lint:web": "cd web && npm run lint",
+    "format": "npm run format:server && npm run format:web",
+    "format:server": "cd server && npm run format",
+    "format:web": "cd web && npm run format",
+    "prisma:migrate": "cd server && npm run prisma:migrate",
+    "prisma:generate": "cd server && npm run prisma:generate",
+    "db:seed": "cd server && npm run db:seed",
+    "setup": "npm run setup:server && npm run setup:web && npm run setup:e2e",
+    "setup:server": "cd server && npm install && npx prisma generate && npx prisma db push",
+    "setup:web": "cd web && npm install",
+    "setup:e2e": "cd e2e && npm install && npx playwright install"
+  },
+  "devDependencies": {
+    "concurrently": "^8.2.2"
+  }
+}

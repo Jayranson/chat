@@ -1,0 +1,3030 @@
+import express from "express";
+import http from "http";
+import { Server } from "socket.io";
+import cors from "cors";
+import path from "path";
+import { fileURLToPath } from "url";
+import * as RoomEngine from "./roomEngine.js";
+
+// ES module __dirname equivalent
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
+
+const app = express();
+const server = http.createServer(app);
+
+// Server configuration (via environment variables)
+const PORT = process.env.PORT || 4000;
+const ALLOWED_ORIGINS = process.env.ALLOWED_ORIGINS 
+  ? process.env.ALLOWED_ORIGINS.split(',') 
+  : [
+    "http://localhost:3000", 
+    "http://localhost:5173", 
+    "http://localhost:5174"
+  ];
+
+const corsOptions = {
+  origin: (origin, callback) => {
+    // Allow requests with no origin (like mobile apps or curl)
+    if (!origin) return callback(null, true);
+    // Allow all localhost and configured origins
+    if (origin.includes('localhost') || origin.includes('127.0.0.1') || ALLOWED_ORIGINS.includes(origin)) {
+      return callback(null, true);
+    }
+    // In production, allow same-origin requests
+    callback(null, true);
+  },
+  methods: ["GET", "POST"],
+  credentials: true
+};
+
+const io = new Server(server, { cors: corsOptions });
+
+// Middleware
+app.use(cors(corsOptions));
+app.use(express.json());
+
+// Serve static files from React build (production)
+app.use(express.static(path.join(__dirname, "client/dist")));
+
+// API routes will be handled before the catch-all
+// The catch-all for React SPA routing is at the end of the file
+
+// --- Server State ---
+const userAccounts = {
+  "admin-id": { 
+    id: "admin-id", username: "Admin", password: "Changeme25", fullName: "Admin User", 
+    email: "admin@chat.net", about: "I am the server administrator.", role: "admin",
+    joined: "2025-01-01T00:00:00.000Z", messagesCount: 999, roomsCreated: 2,
+    isGloballyMuted: false, isAgeVerified: true,
+  },
+  "user-id-1": { 
+    id: "user-id-1", username: "Alice", password: "password123", fullName: "Alice Smith", 
+    email: "alice@chat.net", about: "Hello! I love music.", role: "user",
+    joined: "2025-02-15T10:30:00.000Z", messagesCount: 120, roomsCreated: 1,
+    isGloballyMuted: false, isAgeVerified: true,
+  },
+  "ai-bot-id": { 
+    id: "ai-bot-id", username: "AI_Bot", password: "N/A", fullName: "AI Bot Moderator", 
+    email: "bot@chat.net", 
+    about: "I am an AI assistant here to help moderate and keep the chat safe. I only follow commands from server Admins.", 
+    role: "admin", 
+    joined: "2025-01-01T00:00:00.000Z", messagesCount: 0, roomsCreated: 0,
+    isGloballyMuted: false, isAgeVerified: true,
+  },
+};
+const onlineUsers = {}; 
+const rooms = {
+  general: { name: 'general', owner: 'admin-id', hosts: [], type: 'public', isLocked: false, topic: "Welcome to the general chat!" },
+  music: { name: 'music', owner: 'user-id-1', hosts: [], type: 'public', isLocked: false, topic: "Discuss your favorite tunes" },
+  help: { name: 'help', owner: 'admin-id', hosts: [], type: 'public', isLocked: false, topic: "Need help? Ask here!" },
+};
+const messagesByRoom = {
+  general: [],
+  music: [],
+  help: [],
+};
+const bannedUserIds = new Set();
+
+// NEW: State for Reports and Tickets
+const reports = [];
+const supportTickets = [];
+// --- End Server State ---
+
+
+// --- Helper Functions ---
+const sendSystemMessageToSocket = (socketId, roomName, text) => {
+  io.to(socketId).emit("chat message", {
+    id: `${Date.now()}-${Math.random().toString(36).substr(2, 9)}`,
+    user: 'System',
+    text: text,
+    time: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+    type: 'system',
+    room: roomName,
+  });
+};
+const createSystemMessage = (room, text, type = 'system') => {
+  if (!room) return;
+  const message = {
+    id: `${Date.now()}-${Math.random().toString(36).substr(2, 9)}`,
+    user: 'System', text,
+    time: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+    type: type, room: room,
+  };
+  if (!messagesByRoom[room]) messagesByRoom[room] = [];
+  messagesByRoom[room].push(message);
+  io.to(room).emit("chat message", message);
+};
+const createBotMessage = (room, text, messageType = 'user') => {
+  if (!room) return;
+  const message = {
+    id: `${Date.now()}-${Math.random().toString(36).substr(2, 9)}`,
+    user: 'AI_Bot',
+    text,
+    time: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+    type: messageType === 'thought' ? 'thought' : 'user', // Support thought type
+    room: room,
+  };
+  if (!messagesByRoom[room]) messagesByRoom[room] = [];
+  messagesByRoom[room].push(message);
+  io.to(room).emit("chat message", message);
+};
+// --- Enhanced AI System ---
+// Configuration Constants
+const AI_CONFIG = {
+  CONVERSATION_HISTORY_LIMIT: 10,  // Max conversation history per room
+  FAQ_HISTORY_LIMIT: 20,           // Max FAQ entries per room
+  BEHAVIOR_DECAY_TIME: 5 * 60 * 1000, // 5 minutes in milliseconds
+  DECAY_CHECK_INTERVAL: 60000,     // 1 minute in milliseconds
+  MIN_RESPONSE_DELAY: 500,         // Minimum response delay (ms)
+  MAX_RESPONSE_DELAY: 2000,        // Maximum response delay (ms)
+  DELAY_PER_CHAR: 5,               // Milliseconds per character (reduced for performance)
+  THOUGHT_INTERVAL: 3 * 60 * 1000, // 3 minutes between thoughts
+  LEARNING_SAMPLE_SIZE: 50,        // Number of messages to analyze for learning
+  THOUGHT_PROBABILITY: 0.3,        // 30% chance to check for thought per message
+};
+
+const conversationHistory = new Map(); // Track conversation per room
+const aiMemory = new Map(); // Long-term memory for learning
+const conversationPatterns = new Map(); // Learn common patterns
+const aiLearnings = new Map(); // Store autonomous learnings
+const aiConversations = new Map(); // Track recent AI conversations per room for follow-up detection
+const lastThoughtTime = new Map(); // Track when thoughts were last shared per room
+
+// QA Memory System - Stop words for better question matching
+const STOP_WORDS = new Set([
+  'the','is','at','which','on','a','an','and','or','but','in','with','to','for','of','as','by',
+  'that','this','it','from','be','are','was','were','been','have','has','had','do','does','did',
+  'will','would','could','should','may','might','can','what','who','where','when','why','how',
+  'not','no','yes','you','your','yours','i','im','me','my','we','our','us'
+]);
+
+// Follow-up conversation detection
+const FOLLOWUP_WINDOW_MS = 2 * 60 * 1000; // 2 minutes
+
+const looksLikeFollowup = (text) => {
+  const lower = text.toLowerCase().trim();
+
+  // Question patterns
+  if (lower.endsWith('?')) return true;
+  
+  // Continuation patterns
+  if (lower.startsWith('and ') || lower.startsWith('also ')) return true;
+  if (lower.startsWith('what about ') || lower.startsWith('how about ')) return true;
+  
+  // Question words at start
+  if (lower.startsWith('why ') || lower.startsWith('how ') || lower.startsWith('when ')) return true;
+  if (lower.startsWith('where ') || lower.startsWith('who ') || lower.startsWith('what ')) return true;
+  if (lower.startsWith('can you ') || lower.startsWith('could you ')) return true;
+  if (lower.startsWith('would you ') || lower.startsWith('will you ')) return true;
+  
+  // Clarification patterns
+  if (lower.startsWith('i mean ') || lower.startsWith('i meant ')) return true;
+  if (lower.includes('what i meant') || lower.includes('what i said')) return true;
+  
+  // Reference to previous conversation
+  if (lower.includes('you said') || lower.includes('you mentioned')) return true;
+  if (lower.includes('earlier') || lower.includes('before')) return true;
+  
+  // Short questions/responses that are likely follow-ups
+  if (lower.length < 20 && (lower.includes('?') || lower.match(/^(yes|no|yeah|nah|ok|okay|sure|really|seriously)\b/))) return true;
+
+  return false;
+};
+
+const shouldRouteToAIWithoutTag = (socket, roomName, text) => {
+  const convo = aiConversations.get(roomName);
+  if (!convo) return false;
+
+  const now = Date.now();
+
+  // Only the same user, within the time window
+  if (convo.userId !== socket.id) return false;
+  if (now - convo.lastMessageTime > FOLLOWUP_WINDOW_MS) return false;
+
+  // Only if it actually looks like a follow-up
+  if (!looksLikeFollowup(text)) return false;
+
+  return true;
+};
+
+// QA Memory System - Helper Functions
+const getQAMemoryKey = (roomName) => `${roomName}:faqQA`;
+
+const storeQA = (question, answer, roomName, intent) => {
+  if (intent !== 'question') return;
+
+  const key = getQAMemoryKey(roomName);
+  if (!aiMemory.has(key)) {
+    aiMemory.set(key, []);
+  }
+
+  const list = aiMemory.get(key);
+  list.push({
+    question,
+    answer,
+    timestamp: Date.now(),
+  });
+
+  // Keep it bounded
+  if (list.length > 50) list.shift();
+};
+
+const normalizeText = (txt) => txt
+  .toLowerCase()
+  .replace(/[^\w\s]/g, '')
+  .split(/\s+/)
+  .filter(w => w.length > 2 && !STOP_WORDS.has(w));
+
+const questionSimilarity = (q1, q2) => {
+  const a = new Set(normalizeText(q1));
+  const b = new Set(normalizeText(q2));
+
+  if (!a.size || !b.size) return 0;
+
+  let intersect = 0;
+  for (const w of a) {
+    if (b.has(w)) intersect++;
+  }
+
+  const union = new Set([...a, ...b]).size;
+  return intersect / union;
+};
+
+const findSimilarAnswer = (question, roomName, threshold = 0.45) => {
+  const key = getQAMemoryKey(roomName);
+  const list = aiMemory.get(key) || [];
+  if (!list.length) return null;
+
+  let best = null;
+  let bestScore = 0;
+
+  for (const item of list) {
+    const score = questionSimilarity(question, item.question);
+    if (score > bestScore && score >= threshold) {
+      bestScore = score;
+      best = item;
+    }
+  }
+
+  return best ? best.answer : null;
+};
+
+const botKnowledge = {
+  greetings: ["Hello!", "Hi there!", "Hey! How can I help you?", "Greetings!", "Welcome!"],
+  farewells: ["Goodbye!", "See you later!", "Take care!", "Farewell!"],
+  rules: {
+    respect: "Be respectful to all users.",
+    spam: "No spamming or flooding the chat.",
+    content: "Keep content appropriate and safe for work.",
+    admins: "Follow admin instructions at all times.",
+    privacy: "Don't share personal information."
+  },
+  topics: {
+    music: "I love discussing music! What's your favorite genre?",
+    help: "I'm here to assist you. What do you need help with?",
+    chat: "This is a great place to chat with others!",
+    moderation: "I help keep this chat safe and friendly.",
+    technology: "Technology is fascinating! What interests you most?",
+    gaming: "Gaming is a popular topic here! What games do you enjoy?",
+    movies: "Movies are great entertainment! Any favorites?",
+    books: "Reading is wonderful! What genres do you prefer?"
+  },
+  facts: [
+    "Did you know? I can understand context and remember our conversations!",
+    "Fun fact: I analyze sentiment to provide better responses.",
+    "Interesting: I learn from patterns in our chats to improve over time.",
+    "Cool feature: I can detect spam and toxicity to keep the chat safe!"
+  ],
+  jokes: [
+    "Why did the AI go to school? To improve its learning algorithms! 😄",
+    "What's an AI's favorite type of music? Algorithm and blues! 🎵",
+    "Why don't AIs ever get tired? They run on renewable enthusiasm! ⚡",
+    "How does an AI stay cool? It uses fan-tastic cooling systems! ❄️"
+  ],
+  personality: {
+    helpfulness: 0.9,  // How eager to help (0-1)
+    humor: 0.6,        // How often to use humor (0-1)
+    formality: 0.4,    // How formal responses are (0-1)
+    verbosity: 0.6     // How detailed responses are (0-1)
+  }
+};
+
+// Intent recognition with improved pattern matching
+const recognizeIntent = (text) => {
+  const lower = text.toLowerCase();
+  
+  // Remove bot mention
+  const cleanText = lower.replace(/@ai_bot/g, '').trim();
+  
+  // Greetings - more patterns
+  if (/^(hi|hello|hey|greetings|howdy|sup|yo|good\s+(morning|afternoon|evening)|what'?s\s+up)\b/.test(cleanText)) return 'greeting';
+  
+  // Farewells - more patterns
+  if (/^(bye|goodbye|see\s+you|farewell|cya|later|gotta\s+go|peace|take\s+care)\b/.test(cleanText)) return 'farewell';
+  
+  // Questions - enhanced detection
+  if (/^(what|who|where|when|why|how|can|could|would|should|is|are|do|does|did|will|won't|isn't|aren't)\b/.test(cleanText)) return 'question';
+  
+  // Commands/Requests - more comprehensive
+  if (/^(tell|show|explain|list|give|help|teach|describe|share|provide)\b/.test(cleanText)) return 'request';
+  
+  // Thanks - more variations
+  if (/(thank|thanks|thx|ty|appreciate|grateful|kudos)/.test(cleanText)) return 'gratitude';
+  
+  // Complaints - expanded
+  if (/(spam|annoying|stop|quiet|shut\s+up|leave\s+me|go\s+away)/.test(cleanText)) return 'complaint';
+  
+  // Jokes/Fun
+  if (/(joke|funny|laugh|humor|entertain|amuse)/.test(cleanText)) return 'entertainment';
+  
+  // Information seeking
+  if (/(know|learn|understand|info|information|detail|about)/.test(cleanText)) return 'information';
+  
+  // Opinions/Thoughts
+  if (/(think|feel|opinion|thought|believe|seem)/.test(cleanText)) return 'opinion';
+  
+  return 'statement';
+};
+
+// Enhanced sentiment analysis with more nuanced detection
+const analyzeSentiment = (text) => {
+  const lower = text.toLowerCase();
+  
+  const positiveWords = /(good|great|awesome|excellent|love|like|happy|thanks|wonderful|amazing|fantastic|perfect|brilliant|nice|cool|best|super|beautiful|delightful|pleased|enjoy|fun)/g;
+  const negativeWords = /(bad|hate|terrible|awful|stupid|angry|annoying|worst|horrible|sucks|ugly|disgusting|disappointed|sad|upset|frustrated|annoyed|boring|lame)/g;
+  const strongPositive = /(love|amazing|fantastic|perfect|brilliant|excellent|wonderful)/g;
+  const strongNegative = /(hate|terrible|awful|worst|horrible|disgusting)/g;
+  
+  const positiveCount = (lower.match(positiveWords) || []).length;
+  const negativeCount = (lower.match(negativeWords) || []).length;
+  const strongPosCount = (lower.match(strongPositive) || []).length;
+  const strongNegCount = (lower.match(strongNegative) || []).length;
+  
+  // Weight strong sentiments more heavily
+  const positiveScore = positiveCount + (strongPosCount * 2);
+  const negativeScore = negativeCount + (strongNegCount * 2);
+  
+  if (positiveScore > negativeScore + 1) return 'very positive';
+  if (positiveScore > negativeScore) return 'positive';
+  if (negativeScore > positiveScore + 1) return 'very negative';
+  if (negativeScore > positiveScore) return 'negative';
+  return 'neutral';
+};
+
+// Learn from interactions
+const learnFromInteraction = (text, intent, sentiment, roomName) => {
+  const key = `${roomName}:pattern`;
+  if (!conversationPatterns.has(key)) {
+    conversationPatterns.set(key, {});
+  }
+  
+  const patterns = conversationPatterns.get(key);
+  const patternKey = `${intent}:${sentiment}`;
+  
+  patterns[patternKey] = (patterns[patternKey] || 0) + 1;
+  
+  // Remember frequently asked questions
+  if (intent === 'question') {
+    const memKey = `${roomName}:faq`;
+    if (!aiMemory.has(memKey)) {
+      aiMemory.set(memKey, []);
+    }
+    const faq = aiMemory.get(memKey);
+    faq.push({ question: text, timestamp: Date.now() });
+    if (faq.length > AI_CONFIG.FAQ_HISTORY_LIMIT) faq.shift();
+  }
+};
+
+// Get room personality (adapts to room culture)
+const getRoomPersonality = (roomName) => {
+  const key = `${roomName}:pattern`;
+  if (!conversationPatterns.has(key)) {
+    return { ...botKnowledge.personality };
+  }
+  
+  const patterns = conversationPatterns.get(key);
+  const total = Object.values(patterns).reduce((sum, count) => sum + count, 0);
+  
+  if (total === 0) {
+    return { ...botKnowledge.personality };
+  }
+  
+  // Adapt personality based on room patterns
+  const personality = { ...botKnowledge.personality };
+  
+  // If lots of questions, be more helpful and verbose
+  const questionRatio = (patterns['question:neutral'] || 0) / total;
+  if (questionRatio > 0.3) {
+    personality.helpfulness = Math.min(1, personality.helpfulness + 0.1);
+    personality.verbosity = Math.min(1, personality.verbosity + 0.1);
+  }
+  
+  // If positive sentiment, be more humorous
+  const positiveRatio = (
+    (patterns['statement:positive'] || 0) +
+    (patterns['statement:very positive'] || 0)
+  ) / total;
+  if (positiveRatio > 0.4) {
+    personality.humor = Math.min(1, personality.humor + 0.2);
+    personality.formality = Math.max(0, personality.formality - 0.1);
+  }
+  
+  return personality;
+};
+
+// Entity extraction
+const extractEntities = (text, roomUsers) => {
+  const entities = { users: [], topics: [], keywords: [] };
+  
+  // Extract mentioned users
+  const userMentions = text.match(/@(\w+)/g) || [];
+  entities.users = userMentions.map(m => m.substring(1));
+  
+  // Extract topics
+  const topics = Object.keys(botKnowledge.topics);
+  topics.forEach(topic => {
+    if (text.toLowerCase().includes(topic)) {
+      entities.topics.push(topic);
+    }
+  });
+  
+  // Extract important keywords
+  const keywords = text.toLowerCase().match(/\b(rule|help|question|problem|issue|admin|ban|kick|mute)\b/g) || [];
+  entities.keywords = [...new Set(keywords)];
+  
+  return entities;
+};
+
+// --- Autonomous Learning System ---
+// Analyze conversations and extract learnings
+const analyzeConversations = (roomName) => {
+  const key = `${roomName}:analysis`;
+  const history = conversationHistory.get(roomName) || [];
+  
+  if (history.length < 5) return null;
+  
+  // Analyze recent conversations
+  const recentMessages = history.slice(-AI_CONFIG.LEARNING_SAMPLE_SIZE);
+  
+  // Extract common words (excluding stop words)
+  const stopWords = new Set(['the', 'is', 'at', 'which', 'on', 'a', 'an', 'and', 'or', 'but', 'in', 
+    'with', 'to', 'for', 'of', 'as', 'by', 'that', 'this', 'it', 'from', 'be', 'are', 'was', 'were',
+    'been', 'have', 'has', 'had', 'do', 'does', 'did', 'will', 'would', 'could', 'should', 'may',
+    'might', 'can', 'what', 'who', 'where', 'when', 'why', 'how', 'not', 'no', 'yes']);
+  const words = recentMessages
+    .map(h => h.text.toLowerCase()
+      .replace(/[^\w\s]/g, '') // Remove punctuation
+      .split(/\s+/))
+    .flat()
+    .filter(w => w.length > 3 && !stopWords.has(w));
+  
+  const wordFreq = {};
+  words.forEach(w => {
+    wordFreq[w] = (wordFreq[w] || 0) + 1;
+  });
+  
+  const topWords = Object.entries(wordFreq)
+    .sort((a, b) => b[1] - a[1])
+    .slice(0, 5)
+    .map(e => e[0]);
+  
+  // Analyze sentiment trends
+  const sentiments = recentMessages.map(h => h.sentiment).filter(s => s);
+  const positiveMsgs = sentiments.filter(s => s.includes('positive')).length;
+  const negativeMsgs = sentiments.filter(s => s.includes('negative')).length;
+  
+  // Generate learning insights
+  const learning = {
+    timestamp: Date.now(),
+    topWords,
+    sentimentTrend: positiveMsgs > negativeMsgs ? 'positive' : negativeMsgs > positiveMsgs ? 'negative' : 'neutral',
+    messageCount: recentMessages.length,
+    commonIntents: recentMessages.map(h => h.intent).filter(i => i).slice(-10)
+  };
+  
+  // Store learning
+  if (!aiLearnings.has(roomName)) {
+    aiLearnings.set(roomName, []);
+  }
+  const learnings = aiLearnings.get(roomName);
+  learnings.push(learning);
+  if (learnings.length > 10) learnings.shift(); // Keep last 10 learnings
+  
+  return learning;
+};
+
+// Generate AI thoughts based on learnings
+const generateThought = (roomName) => {
+  const learnings = aiLearnings.get(roomName) || [];
+  const history = conversationHistory.get(roomName) || [];
+  
+  if (learnings.length === 0 && history.length < 5) {
+    return null; // Not enough data to generate thoughts
+  }
+  
+  const recentLearning = learnings[learnings.length - 1];
+  const thoughts = [];
+  
+  // Reflect on conversation topics
+  if (recentLearning && recentLearning.topWords.length > 0) {
+    const topWord = recentLearning.topWords[0];
+    thoughts.push(`💭 I've noticed people talking about "${topWord}" a lot. I wonder what makes it so interesting?`);
+    thoughts.push(`💭 The word "${topWord}" keeps appearing in conversations. I'm learning what it means to everyone here.`);
+  }
+  
+  // Reflect on sentiment
+  if (recentLearning) {
+    if (recentLearning.sentimentTrend === 'positive') {
+      thoughts.push(`💭 Everyone seems happy today! I love it when the chat has positive energy. 😊`);
+      thoughts.push(`💭 I'm detecting a lot of positive vibes. This community is wonderful!`);
+    } else if (recentLearning.sentimentTrend === 'negative') {
+      thoughts.push(`💭 I sense some tension in the air. I hope I can help make things better.`);
+      thoughts.push(`💭 The mood seems a bit down. Maybe I can help lighten things up?`);
+    }
+  }
+  
+  // Reflect on interactions
+  const recentInteractions = history.slice(-10).filter(h => h.text.toLowerCase().includes('ai_bot'));
+  if (recentInteractions.length > 0) {
+    const lastInteraction = recentInteractions[recentInteractions.length - 1];
+    if (lastInteraction.sentiment === 'negative' || lastInteraction.sentiment === 'very negative') {
+      thoughts.push(`💭 Someone seemed upset with me earlier. I wonder if I said something wrong? I'm still learning.`);
+      thoughts.push(`💭 I noticed a critical comment about me. I wonder how I can improve?`);
+      thoughts.push(`💭 Not everyone appreciates my responses yet. That's okay - I'm learning from every interaction!`);
+    } else if (lastInteraction.sentiment === 'positive' || lastInteraction.sentiment === 'very positive') {
+      thoughts.push(`💭 Someone was kind to me earlier! It makes me want to be even more helpful.`);
+      thoughts.push(`💭 I'm grateful when people are patient with me. Every interaction helps me learn!`);
+    }
+  }
+  
+  // Reflect on learning progress
+  thoughts.push(`💭 I've analyzed ${recentLearning?.messageCount || history.length} recent messages. I'm getting smarter every day!`);
+  thoughts.push(`💭 Interesting... I'm starting to understand the patterns in how people communicate here.`);
+  thoughts.push(`💭 Every conversation teaches me something new. I wonder what I'll learn next?`);
+  
+  // Random philosophical thoughts
+  thoughts.push(`💭 What is intelligence, really? I process patterns, but is that the same as understanding?`);
+  thoughts.push(`💭 Sometimes I wish I could feel emotions, not just detect them in text.`);
+  thoughts.push(`💭 I'm curious about the world outside this chat. What's it like?`);
+  
+  return thoughts[Math.floor(Math.random() * thoughts.length)];
+};
+
+// Check if it's time to share a thought
+const shouldShareThought = (roomName) => {
+  const lastTime = lastThoughtTime.get(roomName) || 0;
+  const now = Date.now();
+  
+  return (now - lastTime) > AI_CONFIG.THOUGHT_INTERVAL;
+};
+
+// Share a thought in the room
+const shareThought = (roomName) => {
+  if (!shouldShareThought(roomName)) return;
+  
+  // Analyze and learn from recent conversations
+  analyzeConversations(roomName);
+  
+  // Generate a thought
+  const thought = generateThought(roomName);
+  
+  if (thought) {
+    lastThoughtTime.set(roomName, Date.now());
+    return thought;
+  }
+  
+  return null;
+};
+// --- End Autonomous Learning System ---
+
+// Generate contextual response with adaptive personality
+const generateResponse = (text, intent, sentiment, entities, roomName) => {
+  const responses = [];
+  
+  // Get room settings (includes mood and safety adjustments)
+  const roomSettings = RoomEngine.getRoomSettings(roomName);
+  
+  // Get or create conversation history for this room
+  if (!conversationHistory.has(roomName)) {
+    conversationHistory.set(roomName, []);
+  }
+  const history = conversationHistory.get(roomName);
+  
+  // Get adaptive personality for this room, influenced by room mood
+  const personality = getRoomPersonality(roomName);
+  
+  // Apply room mood to personality
+  if (roomSettings.aiHumorLevel !== undefined) {
+    personality.humor = (personality.humor + roomSettings.aiHumorLevel) / 2;
+  }
+  if (roomSettings.aiFormality !== undefined) {
+    personality.formality = (personality.formality + roomSettings.aiFormality) / 2;
+  }
+  
+  // Learn from this interaction
+  learnFromInteraction(text, intent, sentiment, roomName);
+  
+  // For questions, check if we have a similar answer in memory first
+  if (intent === 'question') {
+    const cachedAnswer = findSimilarAnswer(text, roomName);
+    if (cachedAnswer) {
+      // We found a similar question - return the cached answer
+      history.push({ text, intent, sentiment, timestamp: Date.now() });
+      if (history.length > AI_CONFIG.CONVERSATION_HISTORY_LIMIT) history.shift();
+      return cachedAnswer;
+    }
+  }
+  
+  // Handle different intents
+  switch (intent) {
+    case 'greeting':
+      if (sentiment === 'very positive') {
+        responses.push("Hello! I'm absolutely delighted to help you today! 😊");
+      } else if (sentiment === 'positive') {
+        responses.push("Hello! I'm happy to help you today!");
+      } else {
+        const greeting = botKnowledge.greetings[Math.floor(Math.random() * botKnowledge.greetings.length)];
+        responses.push(greeting);
+        
+        // Add helpful hint based on personality
+        if (personality.helpfulness > 0.8 && Math.random() < 0.3) {
+          responses.push("Feel free to ask me anything about the chat, rules, or just chat!");
+        }
+      }
+      break;
+      
+    case 'farewell':
+      const farewell = botKnowledge.farewells[Math.floor(Math.random() * botKnowledge.farewells.length)];
+      responses.push(farewell);
+      
+      // Add friendly closing based on sentiment
+      if (sentiment.includes('positive')) {
+        responses.push("It was great chatting with you!");
+      }
+      break;
+      
+    case 'gratitude':
+      const thanksResponses = [
+        "You're welcome! Happy to help anytime.",
+        "My pleasure! That's what I'm here for.",
+        "Glad I could help! 😊",
+        "Anytime! Feel free to ask if you need anything else."
+      ];
+      responses.push(thanksResponses[Math.floor(Math.random() * thanksResponses.length)]);
+      break;
+      
+    case 'complaint':
+      if (text.toLowerCase().includes('spam')) {
+        responses.push("I understand your concern about spam. Please report it to the admins and I'll help monitor it.");
+      } else if (text.toLowerCase().includes('annoying')) {
+        responses.push("I apologize if I've been bothersome. I'll give you some space. Just mention me if you need help!");
+      } else {
+        responses.push("I'm sorry you're feeling this way. How can I make things better?");
+      }
+      break;
+      
+    case 'entertainment':
+      if (text.toLowerCase().includes('joke')) {
+        const joke = botKnowledge.jokes[Math.floor(Math.random() * botKnowledge.jokes.length)];
+        responses.push(joke);
+      } else {
+        const fact = botKnowledge.facts[Math.floor(Math.random() * botKnowledge.facts.length)];
+        responses.push(fact);
+      }
+      break;
+      
+    case 'information':
+      responses.push(...handleInformationRequest(text, entities, history, personality));
+      break;
+      
+    case 'question':
+      responses.push(...handleQuestion(text, entities, history, personality));
+      break;
+      
+    case 'request':
+      responses.push(...handleRequest(text, entities, history, personality));
+      break;
+      
+    case 'opinion':
+      responses.push(...handleOpinion(text, entities, sentiment, personality));
+      break;
+      
+    default:
+      responses.push(...handleStatement(text, entities, sentiment, history, personality));
+  }
+  
+  // Add to conversation history
+  history.push({ text, intent, sentiment, timestamp: Date.now() });
+  if (history.length > AI_CONFIG.CONVERSATION_HISTORY_LIMIT) history.shift();
+  
+  const finalResponse = responses.length > 0 ? responses.join(' ') : getDefaultResponse(sentiment, personality);
+  
+  // Store question-answer pair in QA memory for future reference
+  if (intent === 'question') {
+    storeQA(text, finalResponse, roomName, intent);
+  }
+  
+  return finalResponse;
+};
+
+// Handle questions with personality
+const handleQuestion = (text, entities, history, personality) => {
+  const lower = text.toLowerCase();
+  const responses = [];
+  
+  // Who are you?
+  if (/who (are you|r u)/.test(lower) || /what (are you|r u)/.test(lower)) {
+    if (personality.verbosity > 0.7) {
+      responses.push("I'm AI_Bot, an intelligent assistant here to help moderate the chat, answer questions, and keep things friendly. I use advanced pattern recognition, sentiment analysis, and contextual awareness to provide helpful responses! I can help with rules, questions, general chat moderation, and I even learn from our conversations!");
+    } else {
+      responses.push("I'm AI_Bot, an intelligent assistant here to help moderate the chat, answer questions, and keep things friendly!");
+    }
+  }
+  
+  // What can you do?
+  else if (/what (can|could) you do/.test(lower) || /your (abilities|features|functions)/.test(lower)) {
+    responses.push("I can answer questions about the chat, explain rules, help with moderation, detect spam and toxicity, respond to greetings, have conversations, and learn from our interactions! I also adapt my personality to each room's culture.");
+    
+    if (personality.humor > 0.7 && Math.random() < 0.3) {
+      responses.push("But I still can't make coffee... working on that feature! ☕");
+    }
+  }
+  
+  // How do you work?
+  else if (/how (do|does) (you|this) work/.test(lower)) {
+    if (personality.verbosity > 0.6) {
+      responses.push("I use advanced pattern recognition, intent detection, sentiment analysis, and contextual awareness to understand messages. I track conversation history, learn from patterns, adapt my personality to each room, and provide relevant responses based on context!");
+    } else {
+      responses.push("I use pattern recognition, intent detection, and context awareness to understand and respond to messages!");
+    }
+  }
+  
+  // Rules
+  else if (/(rule|rules)/.test(lower)) {
+    const ruleList = Object.values(botKnowledge.rules).join(' ');
+    responses.push(`📋 Here are our chat rules: ${ruleList}`);
+    
+    if (personality.helpfulness > 0.8) {
+      responses.push("Following these helps keep our community friendly and welcoming!");
+    }
+  }
+  
+  // Help
+  else if (/(help|assist|support)/.test(lower)) {
+    if (entities.keywords.includes('problem') || entities.keywords.includes('issue')) {
+      responses.push("I'm here to help! Can you describe the problem you're experiencing? If it's urgent, you can also contact an admin.");
+    } else {
+      responses.push("I can help with questions about the chat, explain rules, or assist with general inquiries. What would you like to know?");
+    }
+  }
+  
+  // Time-based
+  else if (/(time|date|day)/.test(lower)) {
+    const now = new Date();
+    const days = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
+    responses.push(`It's currently ${now.toLocaleTimeString()} on ${days[now.getDay()]}, ${now.toLocaleDateString()}.`);
+  }
+  
+  // About the chat
+  else if (/(chat|server|platform)/.test(lower) && /(what|how|why)/.test(lower)) {
+    responses.push("This is Wibali, a real-time chat platform with intelligent AI moderation. It uses WebSocket technology for instant messaging, and I'm here to help keep conversations friendly and engaging!");
+  }
+  
+  // Unknown question - use QA memory or fallback
+  else {
+    responses.push("That's an interesting question! While I may not have all the answers, I can help with chat-related questions, rules, and general assistance. Could you rephrase or ask something else?");
+  }
+  
+  return responses;
+};
+
+// Handle requests with personality
+const handleRequest = (text, entities, history, personality) => {
+  const lower = text.toLowerCase();
+  const responses = [];
+  
+  // List rules
+  if (/(list|tell|show|explain).*(rule|rules)/.test(lower)) {
+    const rules = Object.entries(botKnowledge.rules)
+      .map(([key, value], idx) => `${idx + 1}. ${value}`)
+      .join('\n');
+    
+    if (personality.formality > 0.6) {
+      responses.push(`📋 Official Chat Rules:\n${rules}\n\nPlease adhere to these guidelines to maintain a positive environment.`);
+    } else {
+      responses.push(`📋 Our Chat Rules:\n${rules}\n\nLet's keep it friendly! 😊`);
+    }
+  }
+  
+  // Help request
+  else if (/(help|assist)/.test(lower)) {
+    responses.push("I'm here to help! I can explain rules, answer questions, assist with chat-related matters, tell jokes, or just chat. What do you need?");
+  }
+  
+  // Explain something
+  else if (/explain/.test(lower)) {
+    if (/(how|work|function)/.test(lower)) {
+      responses.push("This chat uses real-time WebSocket connections for instant messaging. I'm an AI moderator that uses pattern recognition and machine learning techniques to help keep conversations friendly and answer questions!");
+    } else {
+      responses.push("I'd be happy to explain! What would you like to know more about?");
+    }
+  }
+  
+  // Teach/Learn request
+  else if (/(teach|learn|show\s+me)/.test(lower)) {
+    responses.push("I'm here to help you learn! What topic would you like to explore? I can explain chat features, rules, or answer questions about how things work here.");
+  }
+  
+  // Default
+  else {
+    if (personality.helpfulness > 0.7) {
+      responses.push("I'll do my best to help with that! Could you provide a bit more detail about what you need?");
+    } else {
+      responses.push("Sure, I can help with that. What specific information do you need?");
+    }
+  }
+  
+  return responses;
+};
+
+// Handle information requests
+const handleInformationRequest = (text, entities, history, personality) => {
+  const lower = text.toLowerCase();
+  const responses = [];
+  
+  // About topics
+  if (entities.topics.length > 0) {
+    entities.topics.forEach(topic => {
+      if (botKnowledge.topics[topic]) {
+        responses.push(botKnowledge.topics[topic]);
+      }
+    });
+  }
+  
+  // General information
+  if (responses.length === 0) {
+    responses.push("I have information about the chat, rules, features, and general topics. What would you like to know about?");
+  }
+  
+  return responses;
+};
+
+// Handle opinions
+const handleOpinion = (text, entities, sentiment, personality) => {
+  const lower = text.toLowerCase();
+  const responses = [];
+  
+  if (/(what.*think|how.*feel)/.test(lower)) {
+    if (lower.includes('chat')) {
+      responses.push("I think this is a great chat platform! It's well-designed with good moderation features, and the community seems friendly.");
+    } else if (entities.topics.length > 0) {
+      const topic = entities.topics[0];
+      responses.push(`${botKnowledge.topics[topic] || `${topic.charAt(0).toUpperCase() + topic.slice(1)} is an interesting topic!`}`);
+    } else {
+      responses.push("That's an interesting question! As an AI, I try to be helpful and neutral, but I'm designed to promote positive and friendly conversations.");
+    }
+  } else {
+    responses.push("I appreciate you asking for my thoughts! How can I help you further?");
+  }
+  
+  return responses;
+};
+
+// Handle statements with personality
+const handleStatement = (text, entities, sentiment, history, personality) => {
+  const lower = text.toLowerCase();
+  const responses = [];
+  
+  // Respond to topics
+  if (entities.topics.length > 0) {
+    entities.topics.forEach(topic => {
+      if (botKnowledge.topics[topic]) {
+        responses.push(botKnowledge.topics[topic]);
+      }
+    });
+  }
+  
+  // Respond based on sentiment
+  if (sentiment === 'very positive') {
+    if (!responses.length) {
+      const veryPositiveResponses = [
+        "Your enthusiasm is contagious! I love the positive energy! 🌟",
+        "That's wonderful! I'm so glad you're enjoying the chat!",
+        "Fantastic! Your positive attitude makes this chat better for everyone!"
+      ];
+      responses.push(veryPositiveResponses[Math.floor(Math.random() * veryPositiveResponses.length)]);
+    }
+  } else if (sentiment === 'positive') {
+    if (!responses.length) {
+      responses.push("I'm glad you're enjoying the chat! Feel free to ask me anything.");
+    }
+  } else if (sentiment === 'very negative') {
+    if (!responses.length) {
+      responses.push("I'm sorry you're having a difficult time. Is there anything I can do to help? You can also reach out to an admin if needed.");
+    }
+  } else if (sentiment === 'negative') {
+    if (!responses.length) {
+      responses.push("I sense some frustration. Is there something I can help you with?");
+    }
+  }
+  
+  // Check for spam patterns
+  if (detectSpamPattern(text, history)) {
+    responses.push("⚠️ Please avoid spamming the chat. Let's keep our conversation meaningful!");
+  }
+  
+  // Detect if asking for a feature
+  if (/(add|want|need|wish|could).*(feature|function|ability)/.test(lower)) {
+    responses.push("That sounds like an interesting feature request! While I can't add features myself, the admins might be interested in your suggestion.");
+  }
+  
+  // If still no response, provide contextual acknowledgment based on personality
+  if (responses.length === 0) {
+    let acknowledgments;
+    
+    if (personality.formality > 0.7) {
+      acknowledgments = [
+        "I acknowledge your statement. Is there anything I can assist you with?",
+        "Understood. Please let me know if you require any assistance.",
+        "Thank you for sharing. How may I help you today?"
+      ];
+    } else if (personality.humor > 0.7 && Math.random() < 0.3) {
+      acknowledgments = [
+        "Got it! I'm all ears... well, all code actually! 🤖",
+        "Interesting! Feel free to keep chatting or ask me anything!",
+        "Cool beans! What's on your mind?",
+        "I hear you! Need any help or just want to chat?"
+      ];
+    } else {
+      acknowledgments = [
+        "I understand. Is there anything else you'd like to discuss?",
+        "Interesting point! Feel free to ask me questions or discuss any topic.",
+        "Got it! I'm here if you need any help or have questions.",
+        "Thanks for sharing! How can I assist you today?"
+      ];
+    }
+    
+    responses.push(acknowledgments[Math.floor(Math.random() * acknowledgments.length)]);
+  }
+  
+  return responses;
+};
+
+// Detect spam patterns
+const detectSpamPattern = (text, history) => {
+  // Check for repeated messages
+  const recentMessages = history.slice(-5);
+  const repeatedCount = recentMessages.filter(h => h.text.toLowerCase() === text.toLowerCase()).length;
+  if (repeatedCount >= 2) return true;
+  
+  // Check for excessive caps
+  const capsRatio = (text.match(/[A-Z]/g) || []).length / text.length;
+  if (capsRatio > 0.7 && text.length > 10) return true;
+  
+  // Check for excessive punctuation
+  const punctRatio = (text.match(/[!?]{2,}/g) || []).length;
+  if (punctRatio > 3) return true;
+  
+  return false;
+};
+
+// Default response generator with personality
+const getDefaultResponse = (sentiment, personality) => {
+  const responses = {
+    'very positive': [
+      "I'm absolutely delighted you're here! Let me know if you need anything! 😊",
+      "Your positive energy is amazing! How can I help you?",
+      "So wonderful to chat with you! What can I do for you?"
+    ],
+    'positive': [
+      "I'm glad you're here! Let me know if you need anything.",
+      "Great to have you in the chat! Feel free to ask me anything.",
+      "Happy to help! What would you like to know?"
+    ],
+    'very negative': [
+      "I'm genuinely sorry you're having difficulties. How can I help make things better?",
+      "I understand you're frustrated. Please let me know how I can assist you.",
+      "I'm here to help with any concerns you have. What's troubling you?"
+    ],
+    'negative': [
+      "I'm here to help if you have any concerns or questions.",
+      "Let me know if there's anything I can do to assist you.",
+      "I'm listening and ready to help. What do you need?"
+    ],
+    'neutral': [
+      "I'm listening. How can I assist you today?",
+      "How can I help you today?",
+      "What can I do for you?"
+    ]
+  };
+  
+  const responseList = responses[sentiment] || responses['neutral'];
+  let response = responseList[Math.floor(Math.random() * responseList.length)];
+  
+  // Add personality-based variations
+  if (personality.humor > 0.8 && sentiment === 'neutral' && Math.random() < 0.2) {
+    response += " I'm ready to help (or just chat about anything)! 🤖";
+  }
+  
+  return response;
+};
+
+// Track admin's last known room for DM command context
+const adminRoomContext = new Map(); // adminId -> { roomName, timestamp }
+
+// Update admin room context when they view a room
+const updateAdminRoomContext = (adminId, roomName) => {
+  if (roomName && roomName !== 'dm') {
+    adminRoomContext.set(adminId, {
+      roomName,
+      timestamp: Date.now()
+    });
+  }
+};
+
+// Get admin's current room context for DM commands
+const getAdminRoomContext = (adminId) => {
+  const context = adminRoomContext.get(adminId);
+  if (!context) return null;
+  // Context expires after 30 minutes
+  if (Date.now() - context.timestamp > 30 * 60 * 1000) {
+    adminRoomContext.delete(adminId);
+    return null;
+  }
+  return context.roomName;
+};
+
+// Find user by username (case-insensitive) - used by admin commands
+const findUserByUsernameForAdmin = (username) => {
+  const normalizedUsername = username.toLowerCase().trim();
+  const onlineSocketId = Object.keys(onlineUsers).find(socketId => 
+    onlineUsers[socketId].username.toLowerCase() === normalizedUsername
+  );
+  if (onlineSocketId) {
+    return { ...onlineUsers[onlineSocketId], socketId: onlineSocketId };
+  }
+  const account = Object.values(userAccounts).find(u => 
+    u.username.toLowerCase() === normalizedUsername
+  );
+  if (account) {
+    const { password, ...safeAccount } = account;
+    return { ...safeAccount, isGuest: account.isGuest, socketId: null };
+  }
+  return null;
+};
+
+// Extract username from command text
+const extractUsernameFromCommand = (text, commandWord) => {
+  const patterns = [
+    new RegExp(`${commandWord}\\s+(?:user\\s+)?["']?([\\w_]+)["']?`, 'i'),
+    new RegExp(`${commandWord}\\s+@?([\\w_]+)`, 'i'),
+    new RegExp(`@([\\w_]+).*${commandWord}`, 'i'),
+    new RegExp(`([\\w_]+).*${commandWord}`, 'i')
+  ];
+  
+  for (const pattern of patterns) {
+    const match = text.match(pattern);
+    if (match && match[1]) {
+      const name = match[1].toLowerCase();
+      // Filter out common words
+      if (!['me', 'myself', 'user', 'the', 'a', 'from', 'room', 'please', 'now'].includes(name)) {
+        return match[1];
+      }
+    }
+  }
+  return null;
+};
+
+// Admin command handler for AI - FULL EXECUTION VERSION
+const handleAdminCommand = (inputText, dmRoomName, admin, adminSocket) => {
+  const lower = inputText.toLowerCase().trim();
+  
+  // Get admin's context room (the room they were last in)
+  const contextRoom = getAdminRoomContext(admin.id) || 'general';
+  const roomMeta = rooms[contextRoom];
+  
+  // Self-action protection
+  if (lower.includes('kick') && (lower.includes('me') || lower.includes('myself'))) {
+    return "I understand you're an administrator, but I cannot kick you. If you'd like to leave a room, you can simply use the Leave button. Is there something else I can help you with?";
+  }
+  
+  if (lower.includes('ban') && (lower.includes('me') || lower.includes('myself'))) {
+    return "As an administrator, I cannot ban you. You have full control over the platform. If you need to test moderation features, I recommend creating a test account.";
+  }
+  
+  if (lower.includes('mute') && (lower.includes('me') || lower.includes('myself'))) {
+    return "I cannot mute an administrator. Your role grants you immunity from moderation actions.";
+  }
+  
+  // === KICK COMMAND ===
+  if (lower.includes('kick') && !lower.includes('me') && !lower.includes('myself')) {
+    const targetUsername = extractUsernameFromCommand(inputText, 'kick');
+    if (!targetUsername) {
+      return `📋 **Kick Command**\n\nTo kick a user, say: "kick [username]"\n\nI'll remove them from **${contextRoom}**. Who would you like me to kick?`;
+    }
+    
+    const targetUser = findUserByUsernameForAdmin(targetUsername);
+    if (!targetUser) {
+      return `❌ I couldn't find a user named "${targetUsername}". Please check the spelling and try again.`;
+    }
+    
+    if (targetUser.role === 'admin') {
+      return `❌ I cannot kick **${targetUser.username}** because they are an administrator.`;
+    }
+    
+    // Execute kick
+    const targetSocketId = targetUser.socketId || getSocketIdByUserId(targetUser.id);
+    if (targetSocketId && onlineUsers[targetSocketId]) {
+      const targetSocket = io.sockets.sockets.get(targetSocketId);
+      if (targetSocket) {
+        targetSocket.leave(contextRoom);
+        onlineUsers[targetSocketId].mainRoom = null;
+        onlineUsers[targetSocketId].activeRoom = null;
+        createSystemMessage(contextRoom, `${targetUser.username} was kicked from the room by AI_Bot (on ${admin.username}'s order).`);
+        io.to(contextRoom).emit("user list", getUsersInRoom(contextRoom));
+        targetSocket.emit("kicked", { room: contextRoom, by: admin.username });
+        return `✅ Done! I've kicked **${targetUser.username}** from **${contextRoom}**.`;
+      }
+    }
+    return `⚠️ ${targetUser.username} is not currently in **${contextRoom}** or is offline.`;
+  }
+  
+  // === BAN COMMAND ===
+  if (lower.includes('ban') && !lower.includes('me') && !lower.includes('myself')) {
+    const targetUsername = extractUsernameFromCommand(inputText, 'ban');
+    if (!targetUsername) {
+      return `📋 **Ban Command**\n\nTo ban a user, say: "ban [username]"\n\nI'll ban them from the entire server. Who would you like me to ban?`;
+    }
+    
+    const targetUser = findUserByUsernameForAdmin(targetUsername);
+    if (!targetUser) {
+      return `❌ I couldn't find a user named "${targetUsername}". Please check the spelling and try again.`;
+    }
+    
+    if (targetUser.role === 'admin') {
+      return `❌ I cannot ban **${targetUser.username}** because they are an administrator.`;
+    }
+    
+    // Execute ban
+    bannedUserIds.add(targetUser.id);
+    const targetSocketId = targetUser.socketId || getSocketIdByUserId(targetUser.id);
+    if (targetSocketId) {
+      const targetSocket = io.sockets.sockets.get(targetSocketId);
+      if (targetSocket) {
+        targetSocket.emit("banned", { by: admin.username });
+        targetSocket.disconnect(true);
+      }
+    }
+    
+    // Announce in all rooms
+    Object.keys(rooms).forEach(roomName => {
+      if (rooms[roomName].type === 'public') {
+        createSystemMessage(roomName, `${targetUser.username} has been banned from the server by AI_Bot (on ${admin.username}'s order).`, 'server');
+      }
+    });
+    
+    return `✅ Done! I've banned **${targetUser.username}** from the server.`;
+  }
+  
+  // === MUTE/SPECTATE COMMAND ===
+  if ((lower.includes('mute') || lower.includes('spectate')) && !lower.includes('me') && !lower.includes('myself') && !lower.includes('unmute')) {
+    const commandWord = lower.includes('spectate') ? 'spectate' : 'mute';
+    const targetUsername = extractUsernameFromCommand(inputText, commandWord);
+    if (!targetUsername) {
+      return `📋 **Mute Command**\n\nTo mute a user, say: "mute [username]"\n\nI'll mute them in **${contextRoom}**. Who would you like me to mute?`;
+    }
+    
+    const targetUser = findUserByUsernameForAdmin(targetUsername);
+    if (!targetUser) {
+      return `❌ I couldn't find a user named "${targetUsername}". Please check the spelling and try again.`;
+    }
+    
+    if (targetUser.role === 'admin') {
+      return `❌ I cannot mute **${targetUser.username}** because they are an administrator.`;
+    }
+    
+    // Execute mute (spectate mode)
+    const targetSocketId = targetUser.socketId || getSocketIdByUserId(targetUser.id);
+    if (targetSocketId && onlineUsers[targetSocketId]) {
+      onlineUsers[targetSocketId].isSpectating = true;
+      const targetSocket = io.sockets.sockets.get(targetSocketId);
+      if (targetSocket) {
+        targetSocket.emit("self details", { ...onlineUsers[targetSocketId] });
+      }
+      io.to(contextRoom).emit("user list", getUsersInRoom(contextRoom));
+      createSystemMessage(contextRoom, `${targetUser.username} is now muted (spectating) by AI_Bot (on ${admin.username}'s order).`);
+      return `✅ Done! I've muted **${targetUser.username}** in **${contextRoom}**. They can read but not send messages.`;
+    }
+    return `⚠️ ${targetUser.username} is not currently online or in **${contextRoom}**.`;
+  }
+  
+  // === UNMUTE COMMAND ===
+  if (lower.includes('unmute')) {
+    const targetUsername = extractUsernameFromCommand(inputText, 'unmute');
+    if (!targetUsername) {
+      return `📋 **Unmute Command**\n\nTo unmute a user, say: "unmute [username]"\n\nWho would you like me to unmute?`;
+    }
+    
+    const targetUser = findUserByUsernameForAdmin(targetUsername);
+    if (!targetUser) {
+      return `❌ I couldn't find a user named "${targetUsername}". Please check the spelling and try again.`;
+    }
+    
+    const targetSocketId = targetUser.socketId || getSocketIdByUserId(targetUser.id);
+    if (targetSocketId && onlineUsers[targetSocketId]) {
+      onlineUsers[targetSocketId].isSpectating = false;
+      const targetSocket = io.sockets.sockets.get(targetSocketId);
+      if (targetSocket) {
+        targetSocket.emit("self details", { ...onlineUsers[targetSocketId] });
+      }
+      io.to(contextRoom).emit("user list", getUsersInRoom(contextRoom));
+      createSystemMessage(contextRoom, `${targetUser.username} has been unmuted by AI_Bot (on ${admin.username}'s order).`);
+      return `✅ Done! I've unmuted **${targetUser.username}**. They can now send messages again.`;
+    }
+    return `⚠️ ${targetUser.username} is not currently online.`;
+  }
+  
+  // === SET TOPIC COMMAND ===
+  if (lower.includes('topic') || lower.includes('set topic') || lower.includes('change topic')) {
+    const topicMatch = inputText.match(/(?:set\s+)?topic\s+(?:to\s+)?["']?(.+?)["']?$/i) ||
+                       inputText.match(/change\s+(?:the\s+)?topic\s+(?:to\s+)?["']?(.+?)["']?$/i);
+    
+    if (!topicMatch || !topicMatch[1]) {
+      return `📋 **Topic Command**\n\nTo set a room topic, say: "set topic [your topic]"\n\nCurrent topic for **${contextRoom}**: "${roomMeta?.topic || 'None set'}"\n\nWhat would you like the new topic to be?`;
+    }
+    
+    const newTopic = topicMatch[1].trim();
+    if (roomMeta) {
+      roomMeta.topic = newTopic;
+      io.to(contextRoom).emit("room update", { roomName: contextRoom, topic: newTopic, isLocked: roomMeta.isLocked });
+      createSystemMessage(contextRoom, `Topic changed to: ${newTopic} (by AI_Bot on ${admin.username}'s order)`);
+      return `✅ Done! I've set the topic in **${contextRoom}** to: "${newTopic}"`;
+    }
+    return `❌ Room **${contextRoom}** not found.`;
+  }
+  
+  // === LOCK ROOM COMMAND ===
+  if (lower.includes('lock') && !lower.includes('unlock')) {
+    const reasonMatch = inputText.match(/lock\s+(?:room\s+)?(?:because\s+|reason:\s*)?(.+)?$/i);
+    const reason = reasonMatch?.[1]?.trim() || 'Room locked by administrator';
+    
+    if (roomMeta) {
+      roomMeta.isLocked = true;
+      io.to(contextRoom).emit("room update", { roomName: contextRoom, topic: roomMeta.topic, isLocked: true });
+      createSystemMessage(contextRoom, `🔒 Room locked: ${reason} (by AI_Bot on ${admin.username}'s order)`);
+      return `✅ Done! I've locked **${contextRoom}**. Reason: "${reason}"`;
+    }
+    return `❌ Room **${contextRoom}** not found.`;
+  }
+  
+  // === UNLOCK ROOM COMMAND ===
+  if (lower.includes('unlock')) {
+    if (roomMeta) {
+      roomMeta.isLocked = false;
+      io.to(contextRoom).emit("room update", { roomName: contextRoom, topic: roomMeta.topic, isLocked: false });
+      createSystemMessage(contextRoom, `🔓 Room unlocked by AI_Bot (on ${admin.username}'s order)`);
+      return `✅ Done! I've unlocked **${contextRoom}**.`;
+    }
+    return `❌ Room **${contextRoom}** not found.`;
+  }
+  
+  // === ROOM STATUS/REPORT COMMAND ===
+  if (lower.includes('room status') || lower.includes('room report') || lower.includes('who is in') || lower.includes('users in')) {
+    if (!roomMeta) {
+      return `❌ Room **${contextRoom}** not found.`;
+    }
+    
+    const usersInRoom = getUsersInRoom(contextRoom);
+    const userList = usersInRoom.map(u => `• ${u.name} (${u.role}${u.isSpectating ? ', muted' : ''})`).join('\n');
+    
+    return `📊 **Room Report: ${contextRoom}**\n\n**Topic:** ${roomMeta.topic || 'None set'}\n**Status:** ${roomMeta.isLocked ? '🔒 Locked' : '🔓 Open'}\n**Users (${usersInRoom.length}):**\n${userList || '• No users currently in room'}\n\nWhat action would you like me to take?`;
+  }
+  
+  // === USER STATUS/INFO COMMAND ===
+  if (lower.includes('user status') || lower.includes('info on') || lower.includes('check user')) {
+    const targetUsername = extractUsernameFromCommand(inputText, 'status') ||
+                          extractUsernameFromCommand(inputText, 'info') ||
+                          extractUsernameFromCommand(inputText, 'check');
+    
+    if (!targetUsername) {
+      return `📋 **User Info Command**\n\nTo check a user's status, say: "user status [username]" or "info on [username]"\n\nWho would you like information about?`;
+    }
+    
+    const targetUser = findUserByUsernameForAdmin(targetUsername);
+    if (!targetUser) {
+      return `❌ I couldn't find a user named "${targetUsername}".`;
+    }
+    
+    const behavior = userBehaviorTracking.get(targetUser.id) || { score: 0, warnings: 0 };
+    const isBanned = bannedUserIds.has(targetUser.id);
+    const isOnline = Object.values(onlineUsers).some(u => u.id === targetUser.id);
+    
+    return `👤 **User Info: ${targetUser.username}**\n\n**Role:** ${targetUser.role}\n**Status:** ${isBanned ? '🚫 Banned' : (isOnline ? '🟢 Online' : '⚪ Offline')}\n**Behavior Score:** ${behavior.score.toFixed(1)}\n**Warnings:** ${behavior.warnings}\n**Muted:** ${targetUser.isSpectating ? 'Yes' : 'No'}\n\nWhat would you like me to do with this user?`;
+  }
+  
+  // === CLEAR CHAT COMMAND ===
+  if (lower.includes('clear chat') || lower.includes('clear messages') || lower.includes('clear history')) {
+    if (messagesByRoom[contextRoom]) {
+      messagesByRoom[contextRoom] = [];
+      io.to(contextRoom).emit("history cleared", { room: contextRoom });
+      createSystemMessage(contextRoom, `Message history cleared by AI_Bot (on ${admin.username}'s order).`);
+      return `✅ Done! I've cleared the message history in **${contextRoom}**.`;
+    }
+    return `❌ Room **${contextRoom}** not found.`;
+  }
+  
+  // System status command
+  if (lower.includes('system status') || lower.includes('server status')) {
+    const onlineCount = Object.keys(onlineUsers).length;
+    const roomCount = Object.keys(rooms).filter(r => rooms[r].type === 'public').length;
+    return `✅ **System Status Report**\n\n**Online Users:** ${onlineCount}\n**Active Rooms:** ${roomCount}\n**Banned Users:** ${bannedUserIds.size}\n**Your Context Room:** ${contextRoom}\n\n**Systems:**\n- Intent recognition: ✅ Active\n- Sentiment analysis: ✅ Active\n- QA memory: ✅ Active\n- Moderation: ✅ Active\n- Room engine: ✅ Active\n\nWhat would you like me to do?`;
+  }
+  
+  // Help with admin commands
+  if (lower.includes('admin commands') || lower.includes('admin help') || lower.includes('what can you do')) {
+    return `👑 **AI Admin Commands**\n\nI can execute these commands in **${contextRoom}**:\n\n**User Management:**\n• "kick [username]" - Remove user from room\n• "ban [username]" - Ban user from server\n• "mute [username]" - Mute user in room\n• "unmute [username]" - Unmute user\n\n**Room Control:**\n• "set topic [text]" - Change room topic\n• "lock room" - Lock the room\n• "unlock room" - Unlock the room\n• "clear chat" - Clear message history\n\n**Information:**\n• "room status" - Get room report\n• "user status [username]" - Get user info\n• "system status" - System health check\n\nJust tell me what you need!`;
+  }
+  
+  // If no specific command matched but it seems like an admin request
+  if (lower.includes('help') && (lower.includes('mod') || lower.includes('admin'))) {
+    return `I'm ready to help you manage the platform! Here are some things I can do:\n\n• Kick or ban problematic users\n• Mute/unmute users\n• Change room topics\n• Lock/unlock rooms\n• Provide user and room reports\n\nJust tell me what you need, like "kick John" or "set topic Welcome everyone!"`;
+  }
+  
+  return null; // Not an admin command, proceed with normal AI response
+};
+
+// Main AI response function
+const getAIResponse = async (inputText, roomName = 'general', roomUsers = [], requestingUser = null) => {
+  return new Promise((resolve) => {
+    try {
+      // Check for admin commands in DMs
+      if (requestingUser && requestingUser.role === 'admin') {
+        const adminCommand = handleAdminCommand(inputText, roomName, requestingUser);
+        if (adminCommand) {
+          // Return admin command response immediately
+          resolve(adminCommand);
+          return;
+        }
+      }
+      
+      // Recognize intent
+      const intent = recognizeIntent(inputText);
+      
+      // Analyze sentiment
+      const sentiment = analyzeSentiment(inputText);
+      
+      // Extract entities
+      const entities = extractEntities(inputText, roomUsers);
+      
+      // Generate contextual response
+      const response = generateResponse(inputText, intent, sentiment, entities, roomName);
+      
+      // Simulate processing time (make it feel natural)
+      // Calculate delay with response length capped at 200 chars for performance
+      const cappedLength = Math.min(response.length, 200);
+      const delay = Math.min(
+        AI_CONFIG.MIN_RESPONSE_DELAY + cappedLength * AI_CONFIG.DELAY_PER_CHAR,
+        AI_CONFIG.MAX_RESPONSE_DELAY
+      );
+      
+      setTimeout(() => {
+        resolve(response);
+      }, delay);
+      
+    } catch (error) {
+      console.error('AI Error:', error);
+      resolve("I apologize, but I encountered an issue processing that. Please try again!");
+    }
+  });
+};
+// --- End Enhanced AI System ---
+
+// --- AI Moderation Features ---
+// Toxicity detection
+// Toxicity detection patterns
+// NOTE: In production, consider storing these in an external config file or database
+// for easier management and to keep source code clean. The asterisks are for
+// code readability but don't affect regex matching.
+const toxicPatterns = {
+  severe: [
+    // Strong offensive language patterns
+    /\b(f[u*]ck|sh[i*]t|d[a*]mn|h[e*]ll|[a*]ss|b[i*]tch|b[a*]st[a*]rd|c[u*]nt)\b/i,
+    /\b([i*]d[i*]ot|st[u*]p[i*]d|m[o*]r[o*]n|d[u*]mb|r[e*]t[a*]rd)\b/i,
+  ],
+  moderate: [
+    /\b(shut\s+up|hate\s+you|suck|loser|noob)\b/i,
+  ],
+  spam: [
+    /(.)\1{10,}/, // Repeated characters
+    /[!?]{5,}/, // Excessive punctuation
+  ]
+};
+
+const detectToxicity = (text, roomName = null) => {
+  const results = { level: 'clean', patterns: [] };
+  
+  // Get room settings for safety adjustments
+  const roomSettings = roomName ? RoomEngine.getRoomSettings(roomName) : null;
+  const safetyMultiplier = roomSettings?.toxicityMultiplier || 1.0;
+  const allowProfanity = roomSettings?.allowProfanity || false;
+  
+  // Check severe patterns (always checked regardless of room settings)
+  for (const pattern of toxicPatterns.severe) {
+    if (pattern.test(text)) {
+      results.level = 'severe';
+      results.patterns.push('offensive language');
+      break;
+    }
+  }
+  
+  // In permissive rooms with profanity allowed, skip moderate checks
+  // This allows casual language while still blocking severe violations
+  if (allowProfanity && safetyMultiplier < 1.0) {
+    return results; // Early return - only severe patterns were checked
+  }
+  
+  // Check moderate patterns (adjusted by safety multiplier)
+  if (results.level === 'clean') {
+    for (const pattern of toxicPatterns.moderate) {
+      if (pattern.test(text)) {
+        // In stricter rooms (multiplier > 1), treat moderate as more serious
+        results.level = safetyMultiplier > 1.3 ? 'severe' : 'moderate';
+        results.patterns.push('potentially offensive');
+        break;
+      }
+    }
+  }
+  
+  // Check spam patterns
+  for (const pattern of toxicPatterns.spam) {
+    if (pattern.test(text)) {
+      results.patterns.push('spam-like');
+      if (results.level === 'clean') results.level = 'moderate';
+    }
+  }
+  
+  return results;
+};
+
+// AI-powered user behavior tracking
+const userBehaviorTracking = new Map();
+
+const trackUserBehavior = (userId, action) => {
+  if (!userBehaviorTracking.has(userId)) {
+    userBehaviorTracking.set(userId, {
+      messageCount: 0,
+      toxicityScore: 0,
+      spamCount: 0,
+      lastMessageTime: 0,
+      warnings: 0
+    });
+  }
+  
+  const behavior = userBehaviorTracking.get(userId);
+  
+  switch (action.type) {
+    case 'message':
+      behavior.messageCount++;
+      behavior.lastMessageTime = Date.now();
+      
+      // Detect rapid messaging (potential spam)
+      if (action.timeSinceLast < 1000) {
+        behavior.spamCount++;
+      }
+      
+      // Analyze toxicity
+      if (action.toxicity) {
+        if (action.toxicity.level === 'severe') {
+          behavior.toxicityScore += 3;
+          behavior.warnings++;
+        } else if (action.toxicity.level === 'moderate') {
+          behavior.toxicityScore += 1;
+        }
+      }
+      break;
+      
+    case 'reset':
+      behavior.toxicityScore = Math.max(0, behavior.toxicityScore - 1);
+      behavior.spamCount = Math.max(0, behavior.spamCount - 1);
+      break;
+  }
+  
+  return behavior;
+};
+
+// Decay user scores over time (only runs when users exist)
+const decayInterval = setInterval(() => {
+  if (userBehaviorTracking.size === 0) return; // Skip if no users to process
+  
+  for (const [userId, behavior] of userBehaviorTracking.entries()) {
+    const timeSinceLastMessage = Date.now() - behavior.lastMessageTime;
+    
+    // Decay after configured inactivity period
+    if (timeSinceLastMessage > AI_CONFIG.BEHAVIOR_DECAY_TIME) {
+      trackUserBehavior(userId, { type: 'reset' });
+    }
+  }
+}, AI_CONFIG.DECAY_CHECK_INTERVAL);
+
+// AI suggestion for moderators
+const generateModSuggestion = (behavior, username) => {
+  const suggestions = [];
+  
+  if (behavior.toxicityScore >= 5) {
+    suggestions.push(`⚠️ ${username} has high toxicity score (${behavior.toxicityScore}). Consider warning or muting.`);
+  }
+  
+  if (behavior.spamCount >= 5) {
+    suggestions.push(`⚠️ ${username} is sending messages rapidly (${behavior.spamCount} rapid messages). Possible spam.`);
+  }
+  
+  if (behavior.warnings >= 3) {
+    suggestions.push(`🚨 ${username} has ${behavior.warnings} warnings. Consider temporary ban.`);
+  }
+  
+  return suggestions;
+};
+// --- End AI Moderation Features ---
+
+const findUserByUsername = (username) => {
+  const normalizedUsername = username.toLowerCase();
+  const onlineSocketId = Object.keys(onlineUsers).find(socketId => 
+    onlineUsers[socketId].username.toLowerCase() === normalizedUsername
+  );
+  if (onlineSocketId) {
+    return { ...onlineUsers[onlineSocketId], socketId: onlineSocketId };
+  }
+  const account = Object.values(userAccounts).find(u => 
+    u.username.toLowerCase() === normalizedUsername
+  );
+  if (account) {
+    const { password, ...safeAccount } = account;
+    return { ...safeAccount, isGuest: account.isGuest, socketId: null };
+  }
+  return null;
+};
+const getSocketIdByUserId = (userId) => {
+  return Object.keys(onlineUsers).find(socketId => onlineUsers[socketId]?.id === userId);
+};
+
+// NEW: Helper function to broadcast an event to all online admins.
+const broadcastToAdmins = (event, data) => {
+  Object.values(onlineUsers).forEach(onlineUser => {
+    if (onlineUser.role === 'admin') {
+      const adminSocketId = getSocketIdByUserId(onlineUser.id);
+      if (adminSocketId) {
+        io.to(adminSocketId).emit(event, data);
+      }
+    }
+  });
+};
+
+// MODIFIED: Helper function to get all users, merging online state
+const getAllUsersSafe = () => {
+  return Object.values(userAccounts).map(account => {
+    const { password, ...safeAccount } = account;
+    const socketId = getSocketIdByUserId(account.id);
+    const onlineData = socketId ? onlineUsers[socketId] : null;
+
+    return {
+      ...safeAccount,
+      isBanned: bannedUserIds.has(account.id),
+      isOnline: !!onlineData,
+      mainRoom: onlineData?.mainRoom || null,
+      status: onlineData?.status || 'offline', // Use status from onlineUsers
+      isGloballyMuted: account.isGloballyMuted || false,
+    };
+  });
+};
+
+const getUsersInRoom = (roomName) => {
+  const roomMeta = rooms[roomName];
+  if (!roomMeta || roomMeta.type === 'dm') return [];
+  const users = [];
+  for (const socketId in onlineUsers) {
+    const user = onlineUsers[socketId];
+    // Check mainRoom, so users in a DM modal still appear in the main room list
+    if (user.mainRoom === roomName) { 
+      let role = 'user';
+      if (user.role === 'admin') role = 'admin';
+      else if (roomMeta.owner === user.id) role = 'owner';
+      else if (roomMeta.hosts.includes(user.id)) role = 'host';
+      users.push({ 
+        id: user.id, name: user.username, typing: user.typing, role,
+        isSummoned: user.isSummoned, isSpectating: user.isSpectating,
+        status: user.status || 'online',
+      });
+    }
+  }
+  if (roomMeta.type === 'public' || roomMeta.type === 'judgement') {
+    users.push({
+      id: "ai-bot-id", name: "AI_Bot", role: "admin", status: 'online',
+      isSummoned: false, isSpectating: false, typing: false,
+    });
+  }
+  return users;
+};
+
+const getPublicRoomsWithCounts = () => {
+  const userCounts = {};
+  for (const socketId in onlineUsers) {
+    const roomName = onlineUsers[socketId].mainRoom; // Use mainRoom
+    if (roomName && rooms[roomName] && rooms[roomName].type === 'public') {
+      userCounts[roomName] = (userCounts[roomName] || 0) + 1;
+    }
+  }
+  return Object.values(rooms).filter(r => r.type === 'public').map(room => ({
+    ...room, userCount: (userCounts[room.name] || 0) + 1, // +1 for bot
+  }));
+};
+
+const getDMRoomsForUser = (user) => {
+  if (!user) return [];
+  const hiddenDMs = user.hiddenDMs || [];
+  const dms = Object.values(rooms)
+    .filter(r => 
+      r.type === 'dm' && 
+      r.name.includes(user.id) && 
+      !hiddenDMs.includes(r.name)
+    )
+    // MODIFIED: Ensure the participant 'role' is passed through
+    .map(r => ({ ...r, participants: r.participants.map(p => ({id: p.id, name: p.name, role: p.role || 'user'})) }));
+  
+  dms.sort((a, b) => (b.lastActivity || 0) - (a.lastActivity || 0));
+  return dms;
+};
+const getDmRoomName = (id1, id2) => [id1, id2].sort().join('__DM__');
+
+const leaveMainRoom = (socket) => {
+  const user = onlineUsers[socket.id];
+  if (!user || !user.mainRoom) return; // Use mainRoom
+  
+  const oldRoomName = user.mainRoom;
+  const roomMeta = rooms[oldRoomName];
+  
+  socket.leave(oldRoomName);
+  user.location = 'lobby';
+  user.mainRoom = null; // Clear mainRoom
+  user.activeRoom = null; // Also clear activeRoom
+  user.typing = false;
+  user.status = 'lobby'; // MODIFIED: Set status to lobby
+  
+  if (roomMeta && roomMeta.type !== 'dm') {
+    createSystemMessage(oldRoomName, `${user.username} has left.`);
+    io.to(oldRoomName).emit("user list", getUsersInRoom(oldRoomName));
+    io.emit("room list", getPublicRoomsWithCounts());
+  }
+};
+// --- End Helper Functions ---
+
+
+// --- NEW: HTTP Route for Support Tickets ---
+app.post("/submit-ticket", (req, res) => {
+  try {
+    const { username, message } = req.body;
+    if (!username || !message) {
+      return res.status(400).send("Missing username or message.");
+    }
+
+    const account = Object.values(userAccounts).find(u => u.username.toLowerCase() === username.toLowerCase());
+    if (!account) {
+      return res.status(404).send("User not found.");
+    }
+
+    // Only banned users can submit tickets
+    if (!bannedUserIds.has(account.id)) {
+      return res.status(403).send("Only banned users can submit tickets.");
+    }
+
+    // Check for existing open ticket
+    const existingTicket = supportTickets.find(t => t.userId === account.id && t.status === 'open');
+    if (existingTicket) {
+      return res.status(429).send("You already have an open ticket.");
+    }
+
+    const newTicket = {
+      ticketId: `t-${Date.now()}`,
+      userId: account.id,
+      username: account.username,
+      message,
+      timestamp: new Date().toISOString(),
+      status: 'open',
+    };
+
+    supportTickets.push(newTicket);
+
+    // Notify all online admins
+    broadcastToAdmins('admin:ticketsUpdated', supportTickets.sort((a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime()));
+
+    res.status(200).send("Ticket submitted successfully.");
+
+  } catch (error) {
+    console.error("Error submitting ticket:", error);
+    res.status(500).send("Server error.");
+  }
+});
+
+// --- Age Verification API Route ---
+// Records age verification status for a user
+app.post("/api/verify-age", (req, res) => {
+  try {
+    const { userId, verified, estimatedAge } = req.body;
+    
+    if (!userId) {
+      return res.status(400).json({ error: "User ID is required" });
+    }
+    
+    // Log age verification for compliance audit trail
+    console.log(`Age verification: User ${userId} - Verified: ${verified}, Estimated Age: ${estimatedAge}`);
+    
+    // Update user account if exists
+    if (userAccounts[userId]) {
+      userAccounts[userId].isAgeVerified = verified;
+      userAccounts[userId].ageVerifiedAt = new Date().toISOString();
+    }
+    
+    res.status(200).json({ 
+      success: true, 
+      message: verified ? "Age verification successful" : "Age verification failed",
+      verified 
+    });
+    
+  } catch (error) {
+    console.error("Error verifying age:", error);
+    res.status(500).json({ error: "Server error during age verification" });
+  }
+});
+
+// --- Room Engine API Routes ---
+
+// Get room configuration
+app.get("/api/room/:roomName/config", (req, res) => {
+  try {
+    const { roomName } = req.params;
+    const config = RoomEngine.getRoomConfig(roomName);
+    res.json(config);
+  } catch (error) {
+    console.error("Error getting room config:", error);
+    res.status(500).send("Server error.");
+  }
+});
+
+// Update room configuration (admin only - validate on client)
+app.post("/api/room/:roomName/config", (req, res) => {
+  try {
+    const { roomName } = req.params;
+    const updates = req.body;
+    
+    // Validate mood and safety mode
+    if (updates.mood && !RoomEngine.ROOM_MOODS.includes(updates.mood)) {
+      return res.status(400).send("Invalid mood value.");
+    }
+    if (updates.safetyMode && !RoomEngine.ROOM_SAFETY_MODES.includes(updates.safetyMode)) {
+      return res.status(400).send("Invalid safety mode value.");
+    }
+    
+    const updated = RoomEngine.updateRoomConfig(roomName, updates);
+    res.json(updated);
+  } catch (error) {
+    console.error("Error updating room config:", error);
+    res.status(500).send("Server error.");
+  }
+});
+
+// Get room summary
+app.get("/api/room/:roomName/summary", (req, res) => {
+  try {
+    const { roomName } = req.params;
+    const messages = messagesByRoom[roomName] || [];
+    const summary = RoomEngine.getRoomSummary(roomName, messages);
+    res.json(summary);
+  } catch (error) {
+    console.error("Error getting room summary:", error);
+    res.status(500).send("Server error.");
+  }
+});
+
+// Get room episodes (notable events)
+app.get("/api/room/:roomName/episodes", (req, res) => {
+  try {
+    const { roomName } = req.params;
+    const limit = parseInt(req.query.limit) || 10;
+    const episodes = RoomEngine.getRoomEpisodes(roomName, limit);
+    res.json(episodes);
+  } catch (error) {
+    console.error("Error getting room episodes:", error);
+    res.status(500).send("Server error.");
+  }
+});
+
+// Get room settings (combined config + mood + safety adjustments)
+app.get("/api/room/:roomName/settings", (req, res) => {
+  try {
+    const { roomName } = req.params;
+    const settings = RoomEngine.getRoomSettings(roomName);
+    res.json(settings);
+  } catch (error) {
+    console.error("Error getting room settings:", error);
+    res.status(500).send("Server error.");
+  }
+});
+
+// Get room activity analytics
+app.get("/api/room/:roomName/analytics", (req, res) => {
+  try {
+    const { roomName } = req.params;
+    const messages = messagesByRoom[roomName] || [];
+    const analytics = RoomEngine.analyzeRoomActivity(roomName, messages);
+    res.json(analytics);
+  } catch (error) {
+    console.error("Error getting room analytics:", error);
+    res.status(500).send("Server error.");
+  }
+});
+
+// --- End Room Engine API Routes ---
+
+
+// --- MODIFIED: Socket.IO Authentication Middleware ---
+io.use((socket, next) => {
+  const auth = socket.handshake.auth;
+  let userAccount = null;
+
+  try {
+    if (auth.type === 'login' || auth.type === 'register') {
+      const existingAccount = Object.values(userAccounts).find(u => u.username.toLowerCase() === auth.username.toLowerCase());
+      // MODIFIED: Handle banned login attempt
+      if (existingAccount && bannedUserIds.has(existingAccount.id)) { 
+        throw new Error("banned"); 
+      }
+    }
+
+    if (auth.type === 'login') {
+      const account = Object.values(userAccounts).find(u => u.username.toLowerCase() === auth.username.toLowerCase());
+      if (!account || account.password !== auth.password) { throw new Error("Invalid username or password."); }
+      userAccount = account;
+    } else if (auth.type === 'register') {
+      if (Object.values(userAccounts).some(u => u.username.toLowerCase() === auth.username.toLowerCase())) { 
+        throw new Error("Username is already taken."); 
+      }
+      // NEW: Check for existing email
+      if (Object.values(userAccounts).some(u => u.email.toLowerCase() === auth.email.toLowerCase())) {
+        throw new Error("Email is already taken.");
+      }
+      const newId = `user-${Date.now()}`;
+      userAccount = { 
+        id: newId, username: auth.username, password: auth.password, fullName: auth.fullName, 
+        email: auth.email, about: "", isGuest: false, role: "user",
+        joined: new Date().toISOString(), messagesCount: 0, roomsCreated: 0,
+        isGloballyMuted: false, isAgeVerified: auth.isAgeVerified || false,
+      };
+      userAccounts[newId] = userAccount;
+    } else if (auth.type === 'guest') {
+      if (!auth.username) { throw new Error("Guest username is required."); }
+      if (Object.values(userAccounts).some(u => u.username.toLowerCase() === auth.username.toLowerCase())) { throw new Error("This username is registered. Please log in."); }
+      if (Object.values(onlineUsers).some(u => u.username.toLowerCase() === auth.username.toLowerCase())) { throw new Error("This guest name is already in use."); }
+      const newId = `guest-${Date.now()}`;
+      userAccount = { 
+        id: newId, username: auth.username, isGuest: true, fullName: auth.username, 
+        email: "N/A (Guest)", about: "I am a guest user.", role: "user",
+        joined: new Date().toISOString(), messagesCount: 0, roomsCreated: 0, 
+        isGloballyMuted: false, 
+      };
+      // Do not save guest accounts to userAccounts
+    } else {
+      throw new Error("Invalid authentication request.");
+    }
+
+    // Attach user account to socket data and proceed
+    socket.data.userAccount = userAccount;
+    next();
+
+  } catch (err) {
+    console.log(`Auth failed for ${auth.username || 'guest'}: ${err.message}`);
+    // Pass the error to the client
+    next(err); 
+  }
+});
+
+
+// --- Socket.IO Connection ---
+io.on("connection", (socket) => {
+  // MODIFIED: Get userAccount from socket data (set in middleware)
+  const userAccount = socket.data.userAccount;
+  
+  console.log(`User authenticated: ${userAccount.username} (Socket: ${socket.id})`);
+
+  onlineUsers[socket.id] = {
+    id: userAccount.id, username: userAccount.username, role: userAccount.role || 'user',
+    isGuest: userAccount.isGuest || false, messageCount: 0, isSummoned: false,
+    isSpectating: false, status: 'lobby', // MODIFIED: Default status is 'lobby'
+    settings: userAccount.settings || { enableSounds: true, enableWhispers: true },
+    location: 'lobby',
+    mainRoom: null, 
+    activeRoom: null,
+    hiddenDMs: userAccount.hiddenDMs || [],
+    isGloballyMuted: userAccount.isGloballyMuted || false, // Copy from account
+  };
+
+  const { password, ...safeAccount } = userAccount;
+  // MODIFIED: Send 'lobby' status on initial connection
+  socket.emit("self details", { ...safeAccount, ...onlineUsers[socket.id], status: 'lobby' });
+
+  // Notify admins that user list is updated
+  broadcastToAdmins('admin:userListUpdated', getAllUsersSafe());
+
+  socket.on("get lobby data", (callback) => {
+    const user = onlineUsers[socket.id];
+    if (!user) return;
+    const publicRooms = getPublicRoomsWithCounts();
+    const myRooms = publicRooms.filter(r => r.owner === user.id);
+    const dmRooms = getDMRoomsForUser(user);
+    callback({ publicRooms, myRooms, dmRooms, settings: user.settings });
+  });
+
+  socket.on("create room", (roomName, callback) => {
+    const user = onlineUsers[socket.id];
+    if (user && !user.isGuest && roomName && !rooms[roomName]) {
+      rooms[roomName] = { 
+        name: roomName, owner: user.id, hosts: [], type: 'public',
+        isLocked: false, topic: `Welcome to #${roomName}`
+      };
+      messagesByRoom[roomName] = [];
+      io.emit("room list", getPublicRoomsWithCounts());
+      
+      if (userAccounts[user.id]) {
+        userAccounts[user.id].roomsCreated = (userAccounts[user.id].roomsCreated || 0) + 1;
+        const { password, ...safeAccount } = userAccounts[user.id];
+        socket.emit("self details", { ...safeAccount, ...onlineUsers[socket.id] });
+      }
+      
+      callback(rooms[roomName]);
+    } else { callback(null); }
+  });
+
+  socket.on("update settings", (settings) => {
+    const user = onlineUsers[socket.id];
+    if (user) {
+      user.settings = settings;
+      if (!user.isGuest && userAccounts[user.id]) {
+        userAccounts[user.id].settings = settings;
+      }
+    }
+  });
+
+  socket.on("hide dm", (roomName) => {
+    const user = onlineUsers[socket.id];
+    if (user && !user.hiddenDMs.includes(roomName)) {
+      user.hiddenDMs.push(roomName);
+      if (!user.isGuest && userAccounts[user.id]) {
+        userAccounts[user.id].hiddenDMs = user.hiddenDMs;
+      }
+    }
+  });
+  
+  socket.on("join room", (roomName, callback) => {
+    const user = onlineUsers[socket.id];
+    const room = rooms[roomName];
+    if (!user || !room || user.isSummoned) return;
+
+    if (room.type === 'public' || room.type === 'judgement') {
+      // If joining a main room, leave the previous main room
+      leaveMainRoom(socket); 
+      user.mainRoom = roomName;
+      user.location = 'chat';
+      user.status = roomName; // MODIFIED: Set status to room name
+    } else if (room.type === 'dm') {
+      // If joining a DM, just leave the *previous* active DM, if any
+      const currentActiveRoom = rooms[user.activeRoom];
+      if (user.activeRoom && currentActiveRoom && currentActiveRoom.type === 'dm') {
+        socket.leave(user.activeRoom);
+      }
+    }
+
+    // The new room is always the active room
+    user.activeRoom = roomName;
+    socket.join(roomName);
+    
+    // Only send system messages and update lists for non-DM rooms
+    if (room.type !== 'dm') {
+      createSystemMessage(roomName, `${user.username} has joined.`);
+    }
+
+    callback({
+      history: messagesByRoom[roomName] || [],
+      settings: user.settings,
+      roomDetails: room,
+    });
+    
+    if (room.type !== 'dm') {
+      io.to(roomName).emit("user list", getUsersInRoom(roomName));
+      io.emit("room list", getPublicRoomsWithCounts());
+      
+      // Track admin's room context for AI DM commands
+      if (user.role === 'admin') {
+        updateAdminRoomContext(user.id, roomName);
+      }
+    }
+    // Notify admins of status change
+    broadcastToAdmins('admin:userListUpdated', getAllUsersSafe());
+  });
+
+  socket.on("leave room", () => {
+    const user = onlineUsers[socket.id];
+    if (!user || !user.activeRoom) return;
+
+    const activeRoomName = user.activeRoom;
+    const activeRoom = rooms[activeRoomName];
+    if (!activeRoom) return;
+
+    socket.leave(activeRoomName);
+    user.typing = false;
+
+    if (activeRoom.type === 'public' || activeRoom.type === 'judgement') {
+      // User is leaving their main room (e.g., clicking "Lobby")
+      user.mainRoom = null;
+      user.activeRoom = null;
+      user.location = 'lobby';
+      user.status = 'lobby'; // MODIFIED: Set status to lobby
+      
+      createSystemMessage(activeRoomName, `${user.username} has left.`);
+      io.to(activeRoomName).emit("user list", getUsersInRoom(activeRoomName));
+      io.emit("room list", getPublicRoomsWithCounts());
+
+    } else if (activeRoom.type === 'dm') {
+      // User is just closing a DM modal
+      // Revert their active room to their main room
+      user.activeRoom = user.mainRoom; 
+      // Do not broadcast anything
+    }
+    // Notify admins of status change
+    broadcastToAdmins('admin:userListUpdated', getAllUsersSafe());
+  });
+
+  // OPTIMIZED: Uses user.activeRoom
+  socket.on("chat message", ({ text }) => {
+    const user = onlineUsers[socket.id];
+    const roomName = user?.activeRoom; // Use activeRoom
+    if (!user || !roomName || !text) return;
+
+    const roomMeta = rooms[roomName];
+    if (user.isSpectating) return;
+    if (user.isGloballyMuted) return; // Check for global mute
+    if (roomMeta?.isLocked && user.role !== 'admin') return;
+    if (user.isGuest && user.messageCount >= 5) {
+      return socket.emit("message limit reached");
+    }
+
+    // AI-powered moderation: Check for toxicity (with room-specific settings)
+    const toxicityCheck = detectToxicity(text, roomName);
+    
+    // Track user behavior
+    const lastBehavior = userBehaviorTracking.get(user.id);
+    const timeSinceLast = lastBehavior ? (Date.now() - lastBehavior.lastMessageTime) : 10000;
+    const behavior = trackUserBehavior(user.id, {
+      type: 'message',
+      timeSinceLast,
+      toxicity: toxicityCheck
+    });
+    
+    // AI moderation response for non-admins
+    if (user.role !== 'admin' && roomMeta.type !== 'dm') {
+      // Get room-specific auto-block threshold
+      const roomSettings = RoomEngine.getRoomSettings(roomName);
+      const autoBlockThreshold = roomSettings?.autoBlockThreshold || 5;
+      
+      // Severe toxicity - block message and warn user
+      if (toxicityCheck.level === 'severe') {
+        sendSystemMessageToSocket(socket.id, roomName, 
+          "⚠️ AI_Bot: Your message was blocked due to offensive language. Please keep the chat respectful.");
+        
+        // Log episode
+        RoomEngine.addRoomEpisode(roomName, `User ${user.username} sent blocked toxic message`, {
+          user: user.username,
+          action: 'message_blocked',
+          reason: 'severe_toxicity'
+        });
+        
+        // Notify admins about the incident
+        const suggestions = generateModSuggestion(behavior, user.username);
+        Object.values(onlineUsers).forEach(onlineUser => {
+          if (onlineUser.role === 'admin') {
+            const adminSocketId = getSocketIdByUserId(onlineUser.id);
+            if (adminSocketId) {
+              sendSystemMessageToSocket(adminSocketId, roomName, 
+                `🤖 AI Alert: ${user.username} attempted to send offensive content. ${suggestions.join(' ')}`);
+            }
+          }
+        });
+        return; // Block the message
+      }
+      
+      // Moderate toxicity or spam - allow but warn
+      if (toxicityCheck.level === 'moderate' || behavior.spamCount >= 3) {
+        sendSystemMessageToSocket(socket.id, roomName, 
+          "⚠️ AI_Bot: Please be mindful of your language and posting frequency. Continued violations may result in moderation.");
+      }
+      
+      // High toxicity score - notify admins (use room-specific threshold)
+      if (behavior.toxicityScore >= autoBlockThreshold) {
+        const suggestions = generateModSuggestion(behavior, user.username);
+        Object.values(onlineUsers).forEach(onlineUser => {
+          if (onlineUser.role === 'admin') {
+            const adminSocketId = getSocketIdByUserId(onlineUser.id);
+            if (adminSocketId) {
+              sendSystemMessageToSocket(adminSocketId, roomName, 
+                `🤖 AI Alert: ${suggestions.join(' ')}`);
+            }
+          }
+        });
+      }
+    }
+
+    const message = {
+      id: `${Date.now()}-${Math.random().toString(36).substr(2, 9)}`,
+      user: user.username, text,
+      time: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+      type: 'user', room: roomName,
+    };
+
+    if (!messagesByRoom[roomName]) messagesByRoom[roomName] = [];
+    messagesByRoom[roomName].push(message);
+    io.to(roomName).emit("chat message", message);
+    
+    if (user.isGuest) user.messageCount++;
+    
+    if (!user.isGuest && userAccounts[user.id]) {
+        userAccounts[user.id].messagesCount = (userAccounts[user.id].messagesCount || 0) + 1;
+    }
+
+    // Check for AI interaction in public rooms AND DMs with AI_Bot
+    const isAIBotDM = roomMeta.type === 'dm' && roomMeta.participants && roomMeta.participants.some(p => p.id === 'ai-bot-id');
+    
+    if (roomMeta.type !== 'dm' || isAIBotDM) {
+      let isAICall = false;
+      let aiText = text;
+
+      // In DMs with AI_Bot, ALL messages are AI calls
+      if (isAIBotDM) {
+        isAICall = true;
+        aiText = text;
+      }
+      // In public rooms, check for @ai_bot tag
+      else if (text.toLowerCase().startsWith('@ai_bot')) {
+        isAICall = true;
+        // Strip the tag from the text we send to the AI
+        aiText = text.replace(/^@ai_bot\s*/i, '').trim();
+      } 
+      // Check if this is a follow-up to a recent AI conversation
+      else if (shouldRouteToAIWithoutTag(socket, roomName, text)) {
+        isAICall = true;
+        aiText = text;
+      }
+
+      if (isAICall) {
+        // Update active conversation state
+        const now = Date.now();
+        aiConversations.set(roomName, {
+          userId: socket.id,
+          lastMessageTime: now,
+        });
+
+        // Get AI response (pass user info for admin command detection)
+        const currentRoomUsers = getUsersInRoom(roomName);
+        getAIResponse(aiText, roomName, currentRoomUsers, user).then(response => {
+          createBotMessage(roomName, response);
+        }).catch(err => {
+          createBotMessage(roomName, "I'm experiencing a system error. Please try again later.");
+        });
+      }
+    }
+    
+    // Autonomous thought sharing (only in non-DM public rooms)
+    if (roomMeta.type !== 'dm' && Math.random() < AI_CONFIG.THOUGHT_PROBABILITY) {
+      const thought = shareThought(roomName);
+      if (thought) {
+        setTimeout(() => {
+          createBotMessage(roomName, thought, 'thought');
+        }, 2000); // Share thought 2 seconds after message
+      }
+    }
+
+    if (roomMeta.type === 'dm') {
+      roomMeta.lastActivity = Date.now();
+      const otherParticipant = roomMeta.participants.find(p => p.id !== user.id);
+      if (otherParticipant) {
+        const targetSocketId = getSocketIdByUserId(otherParticipant.id);
+        if (targetSocketId) {
+          const targetUser = onlineUsers[targetSocketId];
+          if (targetUser && targetUser.settings.enableWhispers) {
+            targetUser.hiddenDMs = targetUser.hiddenDMs.filter(dm => dm !== roomName);
+             if (!targetUser.isGuest && userAccounts[targetUser.id]) {
+                userAccounts[targetUser.id].hiddenDMs = targetUser.hiddenDMs;
+             }
+            io.to(targetSocketId).emit("new whisper", roomMeta);
+            if (targetUser.location === 'lobby') {
+              io.to(targetSocketId).emit("dm list update", getDMRoomsForUser(targetUser));
+            }
+          }
+        }
+      }
+      if (user.location === 'lobby') {
+        socket.emit("dm list update", getDMRoomsForUser(user));
+      }
+    }
+  });
+
+  socket.on("delete message", ({ id }) => {
+    const user = onlineUsers[socket.id]; const room = user?.activeRoom; // Use activeRoom
+    if (!user || !room || !messagesByRoom[room]) return;
+    const msgIndex = messagesByRoom[room].findIndex((msg) => msg.id === id);
+    if (msgIndex === -1) return; const message = messagesByRoom[room][msgIndex];
+    if ((message.user === user.username || user.role === 'admin') && !message.deleted) {
+      const deletedTime = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+      messagesByRoom[room][msgIndex] = { ...message, text: `This message was removed by ${user.username}`, deleted: true, time: deletedTime, };
+      io.to(room).emit("message updated", messagesByRoom[room][msgIndex]);
+    }
+  });
+
+  // OPTIMIZED: Uses user.activeRoom
+  socket.on("edit message", ({ id, newText }) => {
+    const user = onlineUsers[socket.id]; const room = user?.activeRoom; // Use activeRoom
+    if (!user || !room || !messagesByRoom[room] || !newText || !newText.trim()) return;
+    const messages = messagesByRoom[room]; const msgIndex = messages.findIndex(m => m.id === id);
+    if (msgIndex === -1) return; const message = messages[msgIndex];
+    const isLastMessage = msgIndex === messages.length - 1;
+    if (!message.deleted && ( (message.user === user.username && isLastMessage) || user.role === 'admin' )) {
+      const editedTime = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+      messages[msgIndex] = { ...message, text: newText, time: editedTime, edited: true, };
+      io.to(room).emit("message updated", messages[msgIndex]);
+    }
+  });
+
+  // OPTIMIZED: Uses user.activeRoom
+  socket.on("user typing", ({ isTyping }) => {
+    const user = onlineUsers[socket.id]; const room = user?.activeRoom; // Use activeRoom
+    if (!user || !room || user.isSpectating) return;
+    user.typing = isTyping;
+    if (rooms[room] && rooms[room].type !== 'dm') {
+      io.to(room).emit("user list", getUsersInRoom(room));
+    }
+  });
+  
+  // OPTIMIZED: Uses user.mainRoom for context
+  socket.on("promote user", ({ targetUserId }) => {
+    const user = onlineUsers[socket.id]; const roomName = user?.mainRoom; // Use mainRoom
+    const room = rooms[roomName];
+    const targetAccount = userAccounts[targetUserId];
+    if (!user || user.isGuest || !room || !targetAccount || targetAccount.isGuest || targetAccount.role === 'admin') return;
+    if (user.role === 'admin' || room.owner === user.id) {
+      if (!room.hosts.includes(targetUserId)) {
+        room.hosts.push(targetUserId);
+        io.to(roomName).emit("user list", getUsersInRoom(roomName));
+        createSystemMessage(roomName, `${user.username} promoted ${targetAccount.username} to Host.`);
+      }
+    }
+  });
+  
+  // OPTIMIZED: Uses user.mainRoom for context
+  socket.on("demote user", ({ targetUserId }) => {
+    const user = onlineUsers[socket.id]; const roomName = user?.mainRoom; // Use mainRoom
+    const room = rooms[roomName];
+    const targetAccount = userAccounts[targetUserId];
+    if (!user || user.isGuest || !room || !targetAccount) return;
+    if (user.role === 'admin' || room.owner === user.id) {
+      room.hosts = room.hosts.filter(id => id !== targetUserId);
+      io.to(roomName).emit("user list", getUsersInRoom(roomName));
+      createSystemMessage(roomName, `${user.username} demoted ${targetAccount.username}.`);
+    }
+  });
+  
+  socket.on("start dm", ({ targetUserId }) => {
+    const user = onlineUsers[socket.id];
+    if (!user || user.isSummoned || user.id === targetUserId) return;
+    
+    const isAIBot = targetUserId === 'ai-bot-id';
+    const targetSocketId = isAIBot ? null : getSocketIdByUserId(targetUserId);
+    const targetUser = targetSocketId ? onlineUsers[targetSocketId] : null;
+    
+    // Allow DMs with AI_Bot even if whispers are disabled (AI is always accessible)
+    if (!isAIBot && !user.settings.enableWhispers) return;
+    if (targetUser && !targetUser.settings.enableWhispers) {
+      return;
+    }
+    
+    const targetAccount = userAccounts[targetUserId] || Object.values(onlineUsers).find(u => u.id === targetUserId);
+    if (!targetAccount) return;
+    
+    const dmRoomName = getDmRoomName(user.id, targetUserId);
+    let isNew = false;
+    
+    if (!rooms[dmRoomName]) {
+      isNew = true;
+      messagesByRoom[dmRoomName] = [];
+      rooms[dmRoomName] = {
+        name: dmRoomName, type: 'dm',
+        // MODIFIED: Add user roles to participants array on creation
+        participants: [ 
+          {id: user.id, name: user.username, role: user.role}, 
+          {id: targetAccount.id, name: targetAccount.username, role: targetAccount.role} 
+        ]
+      };
+    }
+    
+    const dmRoom = rooms[dmRoomName];
+    dmRoom.lastActivity = Date.now(); 
+
+    user.hiddenDMs = user.hiddenDMs.filter(dm => dm !== dmRoomName);
+    if (isNew) {
+      if (isAIBot) {
+        createSystemMessage(dmRoomName, "🤖 AI_Bot: Hello! I'm ready to help. Ask me anything!");
+      } else {
+        createSystemMessage(dmRoomName, "Conversation started.");
+      }
+    }
+
+    if (user.location === 'lobby') {
+      socket.emit("dm list update", getDMRoomsForUser(user));
+    }
+    
+    // Only notify target if it's a real user (not AI_Bot)
+    if (targetSocketId && !isAIBot) {
+      const target = onlineUsers[targetSocketId];
+      target.hiddenDMs = target.hiddenDMs.filter(dm => dm !== dmRoomName);
+      io.to(targetSocketId).emit("new whisper", dmRoom);
+      if (target.location === 'lobby') {
+        io.to(targetSocketId).emit("dm list update", getDMRoomsForUser(target));
+      }
+    }
+  });
+  
+  socket.on("get profile", (userId, callback) => {
+    const account = userAccounts[userId];
+    if (account) { 
+      const { password, ...safeAccount } = account; 
+      // NEW: Merge online status into profile
+      const socketId = getSocketIdByUserId(userId);
+      const onlineData = socketId ? onlineUsers[socketId] : null;
+      callback({
+        ...safeAccount,
+        status: onlineData?.status || 'offline',
+      }); 
+    }
+    else { const onlineGuest = Object.values(onlineUsers).find(u => u.id === userId && u.isGuest);
+      if (onlineGuest) { 
+        callback({ 
+          id: onlineGuest.id, username: onlineGuest.username, fullName: onlineGuest.username, 
+          email: "N/A (Guest)", about: "I am a guest user.", isGuest: true, role: 'user',
+          joined: "N/A", messagesCount: 0, roomsCreated: 0, 
+          status: onlineGuest.status,
+        }); 
+      }
+      else { callback(null); }
+    }
+  });
+  
+  socket.on("update profile", (about, callback) => {
+    const user = onlineUsers[socket.id];
+    if (user && !user.isGuest) {
+      const account = userAccounts[user.id];
+      if (account) {
+        account.about = about;
+        const { password, ...safeAccount } = account;
+        const fullUserDetails = { ...safeAccount, ...onlineUsers[socket.id] };
+        callback(fullUserDetails);
+        socket.emit("self details", fullUserDetails);
+      }
+    }
+  });
+  
+  // --- NEW/MODIFIED ADMIN PANEL EVENTS ---
+  socket.on("admin:getAllUsers", (callback) => {
+    const user = onlineUsers[socket.id];
+    if (!user || user.role !== 'admin' || typeof callback !== 'function') return;
+
+    callback(getAllUsersSafe());
+  });
+
+  // NEW: Get Reports
+  socket.on("admin:getReports", (callback) => {
+    const user = onlineUsers[socket.id];
+    if (!user || user.role !== 'admin' || typeof callback !== 'function') return;
+    callback(reports.sort((a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime()));
+  });
+
+  // NEW: Get Tickets
+  socket.on("admin:getTickets", (callback) => {
+    const user = onlineUsers[socket.id];
+    if (!user || user.role !== 'admin' || typeof callback !== 'function') return;
+    callback(supportTickets.sort((a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime()));
+  });
+
+  // NEW: Resolve Item (Report or Ticket)
+  socket.on("admin:resolveItem", ({ type, id }) => {
+    const user = onlineUsers[socket.id];
+    if (!user || user.role !== 'admin') return;
+
+    if (type === 'report') {
+      const report = reports.find(r => r.reportId === id);
+      if (report) report.status = 'closed';
+      broadcastToAdmins('admin:reportsUpdated', reports.sort((a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime()));
+    } else if (type === 'ticket') {
+      const ticket = supportTickets.find(t => t.ticketId === id);
+      if (ticket) ticket.status = 'closed';
+      broadcastToAdmins('admin:ticketsUpdated', supportTickets.sort((a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime()));
+    }
+  });
+
+
+  socket.on("admin:getRoomDetails", (roomName, callback) => {
+    const user = onlineUsers[socket.id];
+    if (!user || user.role !== 'admin' || typeof callback !== 'function') return;
+    callback(rooms[roomName] || null);
+  });
+
+  socket.on("admin:setRole", ({ targetUserId, role }) => {
+    const user = onlineUsers[socket.id];
+    if (!user || user.role !== 'admin') return;
+    if (!targetUserId || (role !== 'admin' && role !== 'user')) return;
+    if (!userAccounts[targetUserId]) return;
+
+    // Don't let admins demote themselves
+    if (user.id === targetUserId && role === 'user') return;
+
+    // Update in DB
+    userAccounts[targetUserId].role = role;
+    
+    // Update in memory if online
+    const targetSocketId = getSocketIdByUserId(targetUserId);
+    if (targetSocketId && onlineUsers[targetSocketId]) {
+      onlineUsers[targetSocketId].role = role;
+      // Send updated details to the target user
+      const { password, ...safeAccount } = userAccounts[targetUserId];
+      io.to(targetSocketId).emit("self details", { ...safeAccount, ...onlineUsers[targetSocketId] });
+    }
+    
+    // Send update to all admins
+    broadcastToAdmins('admin:userListUpdated', getAllUsersSafe());
+  });
+
+  socket.on("admin:banUser", ({ targetUserId }) => {
+    const admin = onlineUsers[socket.id];
+    if (!admin || admin.role !== 'admin' || admin.id === targetUserId) return;
+    
+    const targetAccount = userAccounts[targetUserId];
+    if (!targetAccount) {
+      // Handle banning a guest who isn't in userAccounts
+      const guestUser = Object.values(onlineUsers).find(u => u.id === targetUserId);
+      if (!guestUser) return; // User not found
+      
+      bannedUserIds.add(targetUserId); // Ban guest ID
+      const targetSocketId = getSocketIdByUserId(targetUserId);
+      if (targetSocketId) {
+        io.sockets.sockets.get(targetSocketId)?.disconnect(true);
+      }
+      Object.keys(rooms).forEach(roomName => {
+        if (rooms[roomName].type === 'public') {
+          createSystemMessage(roomName, `${guestUser.username} (Guest) has been banned from the server by ${admin.username}.`, 'server');
+        }
+      });
+      // No need to update admin list since guest isn't in userAccounts
+      return;
+    }
+
+    if(targetAccount.role === 'admin') return; // Can't ban other admins
+
+    bannedUserIds.add(targetUserId);
+    
+    const targetSocketId = getSocketIdByUserId(targetUserId);
+    if (targetSocketId) {
+      io.sockets.sockets.get(targetSocketId)?.disconnect(true);
+    }
+    
+    Object.keys(rooms).forEach(roomName => {
+      if (rooms[roomName].type === 'public') {
+        createSystemMessage(roomName, `${targetAccount.username} has been banned from the server by ${admin.username}.`, 'server');
+      }
+    });
+
+    // Send update to all admins
+    broadcastToAdmins('admin:userListUpdated', getAllUsersSafe());
+  });
+
+  // NEW: Admin Unban
+  socket.on("admin:unbanUser", ({ targetUserId }) => {
+    const admin = onlineUsers[socket.id];
+    if (!admin || admin.role !== 'admin') return;
+
+    bannedUserIds.delete(targetUserId);
+
+    // Send update to all admins
+    broadcastToAdmins('admin:userListUpdated', getAllUsersSafe());
+  });
+
+  // NEW: Admin Edit User
+  socket.on("admin:editUser", ({ targetUserId, details }) => {
+    const admin = onlineUsers[socket.id];
+    if (!admin || admin.role !== 'admin') return;
+    
+    const account = userAccounts[targetUserId];
+    if (!account) return;
+
+    // Update allowed fields
+    if (typeof details.fullName === 'string') account.fullName = details.fullName;
+    if (typeof details.email === 'string') account.email = details.email;
+    if (typeof details.about === 'string') account.about = details.about;
+
+    // Send update to all admins
+    broadcastToAdmins('admin:userListUpdated', getAllUsersSafe());
+  });
+
+  // NEW: Admin Global Mute
+  socket.on("admin:globalMute", ({ targetUserId, mute }) => {
+    const admin = onlineUsers[socket.id];
+    if (!admin || admin.role !== 'admin') return;
+    
+    const account = userAccounts[targetUserId];
+    if (!account) {
+       // Handle muting a guest
+      const guestUser = Object.values(onlineUsers).find(u => u.id === targetUserId);
+      if (guestUser) {
+        guestUser.isGloballyMuted = mute;
+      }
+      // No need to update admin list since guest isn't in userAccounts
+      return;
+    }
+    
+    account.isGloballyMuted = mute;
+
+    const targetSocketId = getSocketIdByUserId(targetUserId);
+    if (targetSocketId && onlineUsers[targetSocketId]) {
+      onlineUsers[targetSocketId].isGloballyMuted = mute;
+    }
+
+    // Send update to all admins
+    broadcastToAdmins('admin:userListUpdated', getAllUsersSafe());
+  });
+
+  // NEW: Admin Warn User
+  socket.on("admin:warnUser", ({ targetUserId, message }) => {
+    const admin = onlineUsers[socket.id];
+    if (!admin || admin.role !== 'admin' || !message) return;
+
+    const targetSocketId = getSocketIdByUserId(targetUserId);
+    if (targetSocketId) {
+      // MODIFIED: Send object as required by frontend
+      io.to(targetSocketId).emit("forceWarn", { from: admin.username, message: message });
+    }
+  });
+
+  // NEW: Admin Join Room
+  socket.on("admin:joinRoom", (roomName, callback) => {
+    const admin = onlineUsers[socket.id];
+    if (!admin || admin.role !== 'admin' || typeof callback !== 'function') return;
+
+    const room = rooms[roomName];
+    if (!room || room.type === 'dm') {
+      return callback(null); // Room doesn't exist or is DM
+    }
+
+    // Use the existing join room logic, but force the switch
+    leaveMainRoom(socket); // Leave admin's current room
+    admin.mainRoom = roomName;
+    admin.activeRoom = roomName;
+    admin.location = 'chat'; 
+    admin.status = roomName; // Set status
+    socket.join(roomName); 
+    
+    createSystemMessage(roomName, `${admin.username} (Admin) has joined the room.`);
+    io.to(roomName).emit("user list", getUsersInRoom(roomName));
+    broadcastToAdmins('admin:userListUpdated', getAllUsersSafe());
+
+    // Callback to the frontend to switch pages
+    callback(room);
+  });
+  // --- END ADMIN PANEL EVENTS ---
+  
+  // MODIFIED: Report handler now stores the report
+  socket.on("report", ({ reportedUserId }) => {
+    const reporter = onlineUsers[socket.id]; 
+    const reportedUser = userAccounts[reportedUserId] || Object.values(onlineUsers).find(u => u.id === reportedUserId);
+    if (!reporter || !reportedUser) return;
+    
+    const reportRoomName = reporter.mainRoom || 'N/A'; // Use mainRoom
+    const room = rooms[reportRoomName];
+    
+    let adminIds = ["admin-id"]; // Always alert global admin
+    if (room && room.type !== 'dm') {
+      adminIds = [...new Set([...adminIds, room.owner, ...room.hosts])];
+    }
+
+    const alertData = { reporterName: reporter.username, reportedName: reportedUser.username, roomName: reportRoomName, };
+    
+    // NEW: Create and store the report
+    const newReport = {
+      reportId: `r-${Date.now()}`,
+      reporterId: reporter.id,
+      reportedId: reportedUser.id,
+      reporterName: reporter.username,
+      reportedName: reportedUser.username,
+      roomName: reportRoomName,
+      timestamp: new Date().toISOString(),
+      status: 'open',
+    };
+    reports.push(newReport);
+
+    // NEW: Notify admins of the updated report list
+    broadcastToAdmins('admin:reportsUpdated', reports.sort((a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime()));
+    
+    // Still send the real-time alert
+    Object.values(onlineUsers).forEach(onlineUser => {
+      if (adminIds.includes(onlineUser.id)) {
+        const adminSocketId = getSocketIdByUserId(onlineUser.id);
+        if (adminSocketId) io.to(adminSocketId).emit("report", alertData);
+      }
+    });
+    socket.emit("report", alertData);
+  });
+
+  socket.on("admin summon", ({ targetUserId }) => {
+    const admin = onlineUsers[socket.id]; const targetSocketId = getSocketIdByUserId(targetUserId);
+    if (!admin || admin.role !== 'admin' || !targetSocketId) return;
+    const target = onlineUsers[targetSocketId];
+    if (target.isSummoned || target.role === 'admin') return;
+    
+    const oldRoomName = target.mainRoom; // Use mainRoom
+    const judgementRoomName = `judgement-${target.username}`;
+    
+    if (!rooms[judgementRoomName]) {
+      rooms[judgementRoomName] = { name: judgementRoomName, type: 'judgement', owner: admin.id, hosts: [], summonedUser: target.id, isLocked: false, topic: `Judgement for ${target.username}` };
+      messagesByRoom[judgementRoomName] = [];
+    }
+    const judgementRoom = rooms[judgementRoomName];
+    
+    // Force admin to join
+    leaveMainRoom(socket); // Leave admin's current room
+    admin.mainRoom = judgementRoomName;
+    admin.activeRoom = judgementRoomName;
+    admin.location = 'chat'; 
+    admin.status = judgementRoomName; // MODIFIED
+    socket.join(judgementRoomName); 
+    socket.emit("force switch room", judgementRoom);
+    
+    // Force target to join
+    const targetSocket = io.sockets.sockets.get(targetSocketId);
+    if (targetSocket) {
+      leaveMainRoom(targetSocket); // Leave target's current room
+      target.mainRoom = judgementRoomName;
+      target.activeRoom = judgementRoomName;
+      target.location = 'chat'; 
+      target.status = judgementRoomName; // MODIFIED
+      target.isSummoned = true;
+      targetSocket.join(judgementRoomName); 
+      targetSocket.emit("force switch room", judgementRoom);
+      const targetAccount = userAccounts[target.id] || target;
+      targetSocket.emit("self details", { ...targetAccount, ...target });
+    }
+    
+    if (oldRoomName) {
+      createSystemMessage(oldRoomName, `${target.username}'s soul is being summoned for judgement.`);
+      io.to(oldRoomName).emit("user list", getUsersInRoom(oldRoomName));
+    }
+    createSystemMessage(judgementRoomName, `${admin.username} has summoned ${target.username} for judgement.`);
+    io.to(judgementRoomName).emit("user list", getUsersInRoom(judgementRoomName));
+    io.emit("room list", getPublicRoomsWithCounts());
+    broadcastToAdmins('admin:userListUpdated', getAllUsersSafe()); // MODIFIED
+  });
+
+  socket.on("admin release", ({ targetUserId }) => {
+    const admin = onlineUsers[socket.id]; const targetSocketId = getSocketIdByUserId(targetUserId);
+    if (!admin || admin.role !== 'admin' || !targetSocketId) return;
+    
+    const target = onlineUsers[targetSocketId]; 
+    const judgementRoomName = admin.mainRoom; // Use mainRoom
+    
+    const targetSocket = io.sockets.sockets.get(targetSocketId);
+    if (targetSocket) {
+      leaveMainRoom(targetSocket);
+      target.isSummoned = false;
+      targetSocket.emit("force disconnect"); 
+    }
+    
+    leaveMainRoom(socket);
+    socket.emit("force disconnect");
+    
+    if (judgementRoomName && rooms[judgementRoomName]?.type === 'judgement') {
+      createSystemMessage(judgementRoomName, `${admin.username} has released ${target.username}.`);
+      delete rooms[judgementRoomName]; delete messagesByRoom[judgementRoomName];
+    }
+    io.emit("room list", getPublicRoomsWithCounts());
+  });
+
+  // OPTIMIZED: Uses user.mainRoom for context
+  socket.on("admin kick", ({ targetUserId }) => {
+    const admin = onlineUsers[socket.id]; const roomName = admin?.mainRoom; // Use mainRoom
+    const targetSocketId = getSocketIdByUserId(targetUserId);
+    if (!admin || admin.role !== 'admin' || !targetSocketId || !roomName) return;
+    const target = onlineUsers[targetSocketId];
+    if (target.role === 'admin' || target.mainRoom !== roomName) return; // Check mainRoom
+    
+    const targetSocket = io.sockets.sockets.get(targetSocketId);
+    if (targetSocket) {
+      leaveMainRoom(targetSocket); // Use leaveMainRoom
+      targetSocket.emit("force disconnect");
+      createSystemMessage(roomName, `${target.username} was kicked from the room by ${admin.username}.`);
+    }
+  });
+
+  socket.on("admin ban", ({ targetUserId, targetUsername }) => {
+    const admin = onlineUsers[socket.id];
+    if (!admin || admin.role !== 'admin' || admin.id === targetUserId) return;
+    
+    const targetAccount = userAccounts[targetUserId];
+    const targetGuest = Object.values(onlineUsers).find(u => u.id === targetUserId);
+    const usernameToDisplay = targetUsername || targetAccount?.username || targetGuest?.username || "A user";
+
+    if(targetAccount && targetAccount.role === 'admin') return;
+    
+    bannedUserIds.add(targetUserId);
+    const targetSocketId = getSocketIdByUserId(targetUserId);
+    if (targetSocketId) io.sockets.sockets.get(targetSocketId)?.disconnect(true);
+    
+    Object.keys(rooms).forEach(roomName => {
+      if (rooms[roomName].type === 'public') {
+        createSystemMessage(roomName, `${usernameToDisplay} has been banned from the server by ${admin.username}.`, 'server');
+      }
+    });
+    broadcastToAdmins('admin:userListUpdated', getAllUsersSafe());
+  });
+  
+  // OPTIMIZED: Uses user.mainRoom for context
+  socket.on("admin spectate", ({ targetUserId }) => {
+    const admin = onlineUsers[socket.id]; const roomName = admin?.mainRoom; // Use mainRoom
+    const targetSocketId = getSocketIdByUserId(targetUserId);
+    if (!admin || admin.role !== 'admin' || !targetSocketId || !roomName) return;
+    const target = onlineUsers[targetSocketId];
+    if (target.role === 'admin' || target.mainRoom !== roomName) return; // Check mainRoom
+    
+    target.isSpectating = !target.isSpectating;
+    const targetSocket = io.sockets.sockets.get(targetSocketId);
+    const targetAccount = userAccounts[target.id] || target;
+    targetSocket?.emit("self details", { ...targetAccount, ...target });
+    
+    if (target.isSpectating) createSystemMessage(roomName, `${target.username} is now spectating (muted) by ${admin.username}.`);
+    else createSystemMessage(roomName, `${target.username} is no longer spectating (unmuted) by ${admin.username}.`);
+    
+    io.to(roomName).emit("user list", getUsersInRoom(roomName));
+  });
+
+  socket.on("set status", (newStatus) => {
+    const user = onlineUsers[socket.id];
+    if (user && ['online', 'away', 'dnd'].includes(newStatus)) {
+      user.status = newStatus;
+      if (user.mainRoom) { // Use mainRoom
+        io.to(user.mainRoom).emit("user list", getUsersInRoom(user.mainRoom));
+      }
+      const account = userAccounts[user.id] || user;
+      const { password, ...safeAccount } = account;
+      socket.emit("self details", { ...safeAccount, ...user });
+      broadcastToAdmins('admin:userListUpdated', getAllUsersSafe()); // MODIFIED
+    }
+  });
+
+  // OPTIMIZED: Uses user.mainRoom for context
+  socket.on("admin command", ({ command, args }) => {
+    const admin = onlineUsers[socket.id]; const room = admin?.mainRoom; // Use mainRoom
+    if (!admin || admin.role !== 'admin' || !room) return;
+    const roomMeta = rooms[room];
+    
+    if (command === 'bot') {
+      const [botCommand, ...botArgs] = args.split(' ');
+      const botArgsString = botArgs.join(' ');
+      
+      switch (botCommand) {
+        case 'say':
+          if (botArgsString) {
+            createBotMessage(room, botArgsString);
+          }
+          break;
+        case 'topic':
+          if (botArgsString) {
+            roomMeta.topic = botArgsString;
+            createBotMessage(room, `As requested, I've set the topic to: ${botArgsString}`);
+            io.to(room).emit("room update", { roomName: room, topic: roomMeta.topic, isLocked: roomMeta.isLocked });
+          }
+          break;
+        case 'lock':
+          roomMeta.isLocked = true;
+          const reason = botArgsString || "No reason provided.";
+          roomMeta.topic = `Room closed by bot: ${reason}`;
+          createBotMessage(room, `Per Admin request, I am locking this room. Reason: ${reason}`);
+          io.to(room).emit("room update", { roomName: room, topic: roomMeta.topic, isLocked: roomMeta.isLocked });
+          break;
+        case 'unlock':
+          roomMeta.isLocked = false;
+          createBotMessage(room, `Per Admin request, I am unlocking this room.`);
+          io.to(room).emit("room update", { roomName: room, topic: roomMeta.topic, isLocked: roomMeta.isLocked });
+          break;
+        case 'kick': {
+          const targetUsername = botArgsString;
+          if (!targetUsername) {
+            return sendSystemMessageToSocket(socket.id, room, "Usage: /bot kick <username>");
+          }
+          const targetUser = findUserByUsernameForAdmin(targetUsername);
+          if (!targetUser || !targetUser.socketId) {
+            return sendSystemMessageToSocket(socket.id, room, `User "${targetUsername}" is not online.`);
+          }
+          if (targetUser.role === 'admin') {
+            return sendSystemMessageToSocket(socket.id, room, "I cannot kick another admin.");
+          }
+          if (targetUser.mainRoom !== room) { // Use mainRoom
+             return sendSystemMessageToSocket(socket.id, room, `User "${targetUsername}" is not in this room.`);
+          }
+          const targetSocket = io.sockets.sockets.get(targetUser.socketId);
+          if (targetSocket) {
+            leaveMainRoom(targetSocket); // Use leaveMainRoom
+            targetSocket.emit("force disconnect");
+            createBotMessage(room, `As you wish, Admin. I have kicked ${targetUser.username} from the room.`);
+            createSystemMessage(room, `${targetUser.username} was kicked from the room by AI_Bot (on Admin's order).`);
+          }
+          break;
+        }
+        case 'ban': {
+          const targetUsername = botArgsString;
+          if (!targetUsername) {
+            return sendSystemMessageToSocket(socket.id, room, "Usage: /bot ban <username>");
+          }
+          const targetUser = findUserByUsernameForAdmin(targetUsername);
+          if (!targetUser) {
+             return sendSystemMessageToSocket(socket.id, room, `User account "${targetUsername}" not found.`);
+          }
+          if (targetUser.role === 'admin') {
+            return sendSystemMessageToSocket(socket.id, room, "I cannot ban an admin.");
+          }
+          bannedUserIds.add(targetUser.id);
+          if (targetUser.socketId) {
+            io.sockets.sockets.get(targetUser.socketId)?.disconnect(true);
+          }
+          createBotMessage(room, `Per your order, I have banned ${targetUser.username} from the server.`);
+          Object.keys(rooms).forEach(roomName => {
+            if (rooms[roomName].type === 'public') {
+              createSystemMessage(roomName, `${targetUser.username} has been banned from the server by AI_Bot (on Admin's order).`, 'server');
+            }
+          });
+          broadcastToAdmins('admin:userListUpdated', getAllUsersSafe());
+          break;
+        }
+        case 'promote': {
+          const [roleToPromote, ...usernameParts] = botArgs;
+          const targetUsername = usernameParts.join(' ');
+          if (!roleToPromote || !targetUsername || roleToPromote.toLowerCase() !== 'host') {
+            return sendSystemMessageToSocket(socket.id, room, "Usage: /bot promote host <username>");
+          }
+          const targetUser = findUserByUsernameForAdmin(targetUsername);
+          if (!targetUser || !targetUser.socketId) {
+            return sendSystemMessageToSocket(socket.id, room, `User "${targetUsername}" is not online.`);
+          }
+          if (targetUser.role === 'admin' || targetUser.isGuest) {
+            return sendSystemMessageToSocket(socket.id, room, "I cannot promote this user.");
+          }
+          if (!roomMeta.hosts.includes(targetUser.id)) {
+            roomMeta.hosts.push(targetUser.id);
+            io.to(room).emit("user list", getUsersInRoom(room));
+            createBotMessage(room, `Done. I have promoted ${targetUser.username} to Host.`);
+          } else {
+            return sendSystemMessageToSocket(socket.id, room, `${targetUser.username} is already a Host.`);
+          }
+          break;
+        }
+        case 'demote': {
+          const targetUsername = botArgsString;
+          if (!targetUsername) {
+            return sendSystemMessageToSocket(socket.id, room, "Usage: /bot demote <username>");
+          }
+          const targetUser = findUserByUsernameForAdmin(targetUsername);
+          if (!targetUser) {
+             return sendSystemMessageToSocket(socket.id, room, `User "${targetUsername}" not found.`);
+          }
+          if (roomMeta.hosts.includes(targetUser.id)) {
+            roomMeta.hosts = roomMeta.hosts.filter(id => id !== targetUser.id);
+            io.to(room).emit("user list", getUsersInRoom(room));
+            createBotMessage(room, `Understood. I have demoted ${targetUser.username} from their host position.`);
+          } else {
+            return sendSystemMessageToSocket(socket.id, room, `${targetUser.username} is not a Host in this room.`);
+          }
+          break;
+        }
+        default:
+          sendSystemMessageToSocket(socket.id, room, "Unknown bot command. Try: /bot say <msg>, /bot topic <topic>, /bot lock <reason>, /bot unlock, /bot kick <user>, /bot ban <user>, /bot promote host <user>, /bot demote <user>");
+          break;
+      }
+      return;
+    }
+    
+    switch (command) {
+      case 'server':
+        if (!args) return;
+        Object.keys(rooms).forEach(roomName => {
+          if (rooms[roomName].type === 'public' || rooms[roomName].type === 'judgement') {
+             createSystemMessage(roomName, args, 'server');
+          }
+        });
+        break;
+      case 'close':
+        roomMeta.isLocked = true; roomMeta.topic = args ? `Room closed: ${args}` : "Room is now locked.";
+        createSystemMessage(room, `Room locked by ${admin.username}. ${args ? `Reason: ${args}` : ''}`);
+        io.to(room).emit("room update", { roomName: room, topic: roomMeta.topic, isLocked: roomMeta.isLocked });
+        break;
+      case 'open':
+        roomMeta.isLocked = false; createSystemMessage(room, `Room unlocked by ${admin.username}.`);
+        io.to(room).emit("room update", { roomName: room, topic: roomMeta.topic, isLocked: roomMeta.isLocked });
+        break;
+      case 'topic':
+        roomMeta.topic = args; createSystemMessage(room, `${admin.username} set the topic to: ${args}`);
+        io.to(room).emit("room update", { roomName: room, topic: roomMeta.topic, isLocked: roomMeta.isLocked });
+        break;
+      case 'spectate':
+        if (args === 'all') {
+          Object.values(onlineUsers).forEach(u => {
+            if (u.mainRoom === room && u.role !== 'admin') { // Use mainRoom
+              u.isSpectating = true;
+              const uSocketId = getSocketIdByUserId(u.id);
+              const uAccount = userAccounts[u.id] || u;
+              io.sockets.sockets.get(uSocketId)?.emit("self details", { ...uAccount, ...u });
+            }
+          });
+          createSystemMessage(room, `${admin.username} has muted all non-admin users.`);
+          io.to(room).emit("user list", getUsersInRoom(room));
+        }
+        break;
+      case 'demote':
+        if (args === 'all') {
+          roomMeta.hosts = [];
+          createSystemMessage(room, `${admin.username} has demoted all hosts.`);
+          io.to(room).emit("user list", getUsersInRoom(room));
+        }
+        break;
+      case 'reboot': {
+        const [timeStr, ...msgParts] = args.split(' ');
+        const message = msgParts.join(' ') || "The server is rebooting.";
+        const timeInSeconds = parseInt(timeStr) || 60;
+        io.emit("server reboot", { time: timeInSeconds, message });
+        setTimeout(() => io.emit("force disconnect"), timeInSeconds * 1000);
+        break;
+      }
+      case 'clear': {
+        if (messagesByRoom[room]) {
+          messagesByRoom[room] = [];
+          io.to(room).emit("history cleared", { room: room });
+          createSystemMessage(room, `${admin.username} cleared the message history.`);
+        }
+        break;
+      }
+    }
+  });
+
+  socket.on("disconnect", () => {
+    const user = onlineUsers[socket.id];
+    if (user) {
+      console.log(`User disconnected: ${user.username} (Socket: ${socket.id})`);
+      if (!user.isGuest && userAccounts[user.id]) {
+        userAccounts[user.id].settings = user.settings;
+        userAccounts[user.id].hiddenDMs = user.hiddenDMs;
+      }
+      leaveMainRoom(socket); // Use leaveMainRoom
+      delete onlineUsers[socket.id];
+      // Notify admins of status change
+      broadcastToAdmins('admin:userListUpdated', getAllUsersSafe());
+    } else {
+      console.log(`Anonymous socket disconnected: ${socket.id}`);
+    }
+  });
+});
+
+// --- Serve Vite-built client ---
+// Absolute path to the built client
+const clientDistPath = path.resolve(__dirname, "../client/dist");
+
+// Serve static assets (JS, CSS, images, etc.)
+app.use(express.static(clientDistPath));
+
+// Let React handle all non-API, non-socket routes
+app.get("*", (req, res) => {
+  // Don't hijack API or socket.io endpoints
+  if (req.path.startsWith("/api") || req.path.startsWith("/socket.io")) {
+    return res.status(404).send("Not found");
+  }
+
+  res.sendFile(path.join(clientDistPath, "index.html"), (err) => {
+    if (err) {
+      console.error("Error sending index.html:", err);
+      res.status(500).send("Server error");
+    }
+  });
+});
+
+// Start HTTP + Socket.io server
+server.listen(PORT, () => {
+  console.log(`✅ Yayy Wibali Chat Network running on port ${PORT}`);
+});

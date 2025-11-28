@@ -1,56 +1,60 @@
-# Chat Application
+# Wibali Chat Network
 
-A full-stack real-time chat application with user authentication, persistent messages, WebSocket communication, typing indicators, read receipts, message reactions, and file uploads.
+A full-stack real-time chat application with user authentication, AI-powered moderation, age verification for UK compliance, and advanced admin features.
 
 ## Features
 
-- **User Authentication**: JWT-based authentication with bcrypt password hashing
-- **Persistent Storage**: SQLite database for users, rooms, messages, and reactions
+### Core Features
+- **User Authentication**: Login/Register with password protection
 - **Real-time Messaging**: WebSocket communication using Socket.IO
 - **Typing Indicators**: See when other users are typing
-- **Read Receipts**: Track message read status
-- **Message Reactions**: React to messages with emojis
-- **File/Image Uploads**: Share files and images in chat
+- **Direct Messages (Whispers)**: Private messaging between users
 - **Room/Channel Support**: Create and join public chat rooms
+
+### AI-Powered Features
+- **AI Moderation Bot**: Intelligent moderation with toxicity detection
+- **Sentiment Analysis**: Real-time sentiment tracking
+- **Context-Aware Responses**: AI bot that learns room culture
+- **Autonomous Thoughts**: AI shares relevant insights
+
+### Age Verification (UK Compliance)
+- **Face Detection**: Client-side face detection using face-api.js
+- **Age Estimation**: AI-powered age estimation
+- **Privacy-First**: No facial data stored or transmitted
+- **Compliant**: Meets UK Online Safety Act requirements
+
+### Admin Features
+- **Admin Panel**: Comprehensive user management
+- **User Controls**: Ban, mute, warn, and edit users
+- **Reports & Tickets**: Handle user reports and ban appeals
+- **Room Configuration**: Mood and safety settings per room
+- **Live Moderation**: Real-time user monitoring
 
 ## Tech Stack
 
 ### Backend
-- Node.js with TypeScript
+- Node.js with ES Modules
 - Express.js for REST API
 - Socket.IO for real-time communication
-- better-sqlite3 for database
-- JWT for authentication
-- bcryptjs for password hashing
-- multer for file uploads
-- Zod for validation
 
 ### Frontend
 - React 18 with TypeScript
 - Vite for build tooling
 - Tailwind CSS for styling
 - Socket.IO client
+- face-api.js for age verification
 
 ## Project Structure
 
 ```
-├── server/                 # Backend server
-│   ├── src/
-│   │   ├── db/            # Database schema and initialization
-│   │   ├── middleware/    # Express middleware (auth)
-│   │   ├── models/        # Data models (user, room, message)
-│   │   ├── routes/        # REST API routes
-│   │   ├── socket/        # Socket.IO handlers
-│   │   ├── utils/         # Utility functions (JWT)
-│   │   └── index.ts       # Server entry point
-│   └── package.json
-│
+├── server.js              # Backend server (Express + Socket.IO)
+├── roomEngine.js          # Room configuration and analytics
 ├── client/                # Frontend React app
 │   ├── src/
 │   │   ├── App.tsx       # Main application component
+│   │   ├── AgeVerification.tsx  # Age verification component
 │   │   └── main.tsx      # Entry point
 │   └── package.json
-│
 ├── uploads/              # File upload storage
 └── package.json          # Root package.json
 ```
@@ -59,6 +63,7 @@ A full-stack real-time chat application with user authentication, persistent mes
 
 - Node.js 18 or higher
 - npm or yarn
+- Modern browser with webcam (for age verification)
 
 ## Installation
 
@@ -72,9 +77,6 @@ cd chat
 ```bash
 # Install root dependencies
 npm install
-
-# Install server dependencies
-cd server && npm install && cd ..
 
 # Install client dependencies
 cd client && npm install && cd ..
@@ -94,7 +96,7 @@ Or run them separately:
 
 ```bash
 # Terminal 1 - Server
-cd server && npm run dev
+npm run dev:server
 
 # Terminal 2 - Client
 cd client && npm run dev
@@ -104,112 +106,50 @@ The server will run on `http://localhost:4000` and the client on `http://localho
 
 ### Production Build
 
-Build both server and client:
+Build and start:
 
 ```bash
 npm run build
-```
-
-Start the production server (serves both API and client):
-
-```bash
 npm start
 ```
 
 ## Environment Variables
 
-### Server (.env)
-
 ```env
 PORT=4000
-JWT_SECRET=your-super-secret-jwt-key
-JWT_EXPIRES_IN=7d
-DB_PATH=./data/chat.db
-UPLOADS_DIR=./uploads
-CLIENT_URL=http://localhost:5173
 ALLOWED_ORIGINS=http://localhost:3000,http://localhost:5173
 ```
 
-### Client (.env)
+## Age Verification
 
-```env
-VITE_API_URL=http://localhost:4000
-```
+The app includes face-based age verification to comply with UK regulations:
 
-## API Endpoints
+1. **Local Processing**: All face detection runs in the browser
+2. **Privacy**: No images or facial data are stored or transmitted
+3. **Accuracy**: Uses multiple readings for reliable estimation
+4. **Compliance**: Meets UK Online Safety Act requirements for 18+ platforms
 
-### Authentication
+To skip age verification (for testing):
+- Click "Skip verification" on the age verification page
+- Set `localStorage.setItem('ageVerified', 'true')` in browser console
 
-| Method | Endpoint | Description |
-|--------|----------|-------------|
-| POST | `/api/auth/register` | Register a new user |
-| POST | `/api/auth/login` | Login and get JWT token |
-| GET | `/api/auth/me` | Get current user (requires auth) |
+## Default Accounts
 
-### Rooms
+| Username | Password | Role |
+|----------|----------|------|
+| Admin | Changeme25 | Admin |
+| Alice | password123 | User |
 
-| Method | Endpoint | Description |
-|--------|----------|-------------|
-| GET | `/api/rooms` | List all public rooms |
-| POST | `/api/rooms` | Create a new room |
-| GET | `/api/rooms/:roomId` | Get room details |
-| PATCH | `/api/rooms/:roomId` | Update room |
-| GET | `/api/rooms/:roomId/messages` | Get message history (paginated) |
-| POST | `/api/rooms/:roomId/messages/:messageId/read` | Mark message as read |
-| POST | `/api/rooms/:roomId/messages/:messageId/reactions` | Add reaction |
-| DELETE | `/api/rooms/:roomId/messages/:messageId/reactions/:emoji` | Remove reaction |
-
-### Uploads
-
-| Method | Endpoint | Description |
-|--------|----------|-------------|
-| POST | `/api/uploads` | Upload a file (multipart/form-data) |
-| GET | `/api/uploads/:filename` | Get upload info |
-
-## WebSocket Events
-
-### Client to Server
-
-| Event | Payload | Description |
-|-------|---------|-------------|
-| `room:join` | `roomId` | Join a room |
-| `room:leave` | - | Leave current room |
-| `message:send` | `{ text, attachmentUrl?, attachmentType? }` | Send a message |
-| `message:edit` | `{ messageId, text }` | Edit a message |
-| `message:delete` | `messageId` | Delete a message |
-| `message:read` | `messageId` | Mark message as read |
-| `typing:start` | - | Start typing indicator |
-| `typing:stop` | - | Stop typing indicator |
-| `reaction:add` | `{ messageId, emoji }` | Add reaction |
-| `reaction:remove` | `{ messageId, emoji }` | Remove reaction |
-| `status:update` | `'online' \| 'away' \| 'dnd'` | Update user status |
-
-### Server to Client
-
-| Event | Payload | Description |
-|-------|---------|-------------|
-| `user:connected` | `{ userId, username, role }` | Connection successful |
-| `users:online` | `OnlineUser[]` | Online users update |
-| `user:joined` | `{ userId, username }` | User joined room |
-| `user:left` | `{ userId, username }` | User left room |
-| `message:receive` | `Message` | New message |
-| `message:updated` | `Message` | Message edited |
-| `message:deleted` | `{ messageId }` | Message deleted |
-| `message:read` | `{ userId, username, messageId }` | Read receipt |
-| `typing:update` | `{ userId, username }[]` | Typing users |
-| `reaction:update` | `{ messageId, reactions }` | Reaction updated |
+⚠️ **Important**: Change these passwords in production!
 
 ## Running Tests
 
 ```bash
-# Run all tests
-npm test
+# Run client tests
+npm run test
 
-# Run server tests only
-cd server && npm test
-
-# Run tests with coverage
-cd server && npm run test:coverage
+# Run with watch mode
+cd client && npm run test:watch
 ```
 
 ## Linting and Formatting
@@ -221,20 +161,9 @@ npm run lint
 # Format code with Prettier
 npm run format
 
-# Check formatting
-npm run format:check
-
 # Type check
 npm run typecheck
 ```
-
-## Default Admin Account
-
-On first run, a default admin account is created:
-- **Username**: admin
-- **Password**: admin123
-
-⚠️ **Important**: Change this password in production!
 
 ## License
 

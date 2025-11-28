@@ -1,4 +1,4 @@
-import React, { useEffect, useState, useRef, ChangeEvent } from "react";
+import React, { useEffect, useState, useRef, type ChangeEvent } from "react";
 import { io, Socket } from "socket.io-client";
 
 // --- Server Configuration ---

@@ -1,0 +1,36 @@
+{
+  "name": "chat",
+  "version": "1.0.0",
+  "description": "A full-featured real-time chat application",
+  "private": true,
+  "scripts": {
+    "dev": "concurrently \"npm run dev:server\" \"npm run dev:web\"",
+    "dev:server": "cd server && npm run dev",
+    "dev:web": "cd web && npm run dev",
+    "build": "npm run build:server && npm run build:web",
+    "build:server": "cd server && npm run build",
+    "build:web": "cd web && npm run build",
+    "start": "cd server && npm run start",
+    "db:migrate": "cd server && npm run db:migrate",
+    "db:seed": "cd server && npm run db:seed",
+    "test": "npm run test:server",
+    "test:server": "cd server && npm run test",
+    "e2e": "cd server && npm run e2e",
+    "lint": "npm run lint:server && npm run lint:web",
+    "lint:server": "cd server && npm run lint",
+    "lint:web": "cd web && npm run lint",
+    "format": "npm run format:server && npm run format:web",
+    "format:server": "cd server && npm run format",
+    "format:web": "cd web && npm run format",
+    "typecheck": "npm run typecheck:server && npm run typecheck:web",
+    "typecheck:server": "cd server && npm run typecheck",
+    "typecheck:web": "cd web && npm run typecheck",
+    "install:all": "npm install && cd server && npm install && cd ../web && npm install"
+  },
+  "devDependencies": {
+    "concurrently": "^8.2.2"
+  },
+  "engines": {
+    "node": ">=18.0.0"
+  }
+}

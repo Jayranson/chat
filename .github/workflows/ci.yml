@@ -1,0 +1,143 @@
+name: CI
+
+on:
+  push:
+    branches: [main, master]
+  pull_request:
+    branches: [main, master]
+
+jobs:
+  lint-and-typecheck:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+
+      - name: Install root dependencies
+        run: npm install
+
+      - name: Install server dependencies
+        run: cd server && npm install
+
+      - name: Install web dependencies
+        run: cd web && npm install
+
+      - name: Generate Prisma Client
+        run: cd server && npx prisma generate
+
+      - name: Lint server
+        run: cd server && npm run lint
+
+      - name: Lint web
+        run: cd web && npm run lint
+
+      - name: Typecheck server
+        run: cd server && npm run typecheck
+
+      - name: Typecheck web
+        run: cd web && npm run typecheck
+
+  build:
+    runs-on: ubuntu-latest
+    needs: lint-and-typecheck
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+
+      - name: Install root dependencies
+        run: npm install
+
+      - name: Install server dependencies
+        run: cd server && npm install
+
+      - name: Install web dependencies
+        run: cd web && npm install
+
+      - name: Generate Prisma Client
+        run: cd server && npx prisma generate
+
+      - name: Build server
+        run: cd server && npm run build
+
+      - name: Build web
+        run: cd web && npm run build
+
+  test:
+    runs-on: ubuntu-latest
+    needs: build
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+
+      - name: Install root dependencies
+        run: npm install
+
+      - name: Install server dependencies
+        run: cd server && npm install
+
+      - name: Generate Prisma Client
+        run: cd server && npx prisma generate
+
+      - name: Create test database
+        run: cd server && npx prisma db push
+        env:
+          DATABASE_URL: file:./test.db
+
+      - name: Run server tests
+        run: cd server && npm test
+        env:
+          DATABASE_URL: file:./test.db
+          JWT_SECRET: test-secret-key
+
+  e2e:
+    runs-on: ubuntu-latest
+    needs: build
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+
+      - name: Install root dependencies
+        run: npm install
+
+      - name: Install server dependencies
+        run: cd server && npm install
+
+      - name: Install web dependencies
+        run: cd web && npm install
+
+      - name: Generate Prisma Client
+        run: cd server && npx prisma generate
+
+      - name: Create E2E database
+        run: cd server && npx prisma db push
+        env:
+          DATABASE_URL: file:./e2e.db
+
+      - name: Install Playwright browsers
+        run: cd server && npx playwright install --with-deps chromium
+
+      - name: Run E2E tests
+        run: cd server && npm run e2e
+        env:
+          DATABASE_URL: file:./e2e.db
+          JWT_SECRET: e2e-secret-key

@@ -56,13 +56,13 @@ const userAccounts = {
     id: "admin-id", username: "Admin", password: "Changeme25", fullName: "Admin User", 
     email: "admin@chat.net", about: "I am the server administrator.", role: "admin",
     joined: "2025-01-01T00:00:00.000Z", messagesCount: 999, roomsCreated: 2,
-    isGloballyMuted: false,
+    isGloballyMuted: false, isAgeVerified: true,
   },
   "user-id-1": { 
     id: "user-id-1", username: "Alice", password: "password123", fullName: "Alice Smith", 
     email: "alice@chat.net", about: "Hello! I love music.", role: "user",
     joined: "2025-02-15T10:30:00.000Z", messagesCount: 120, roomsCreated: 1,
-    isGloballyMuted: false,
+    isGloballyMuted: false, isAgeVerified: true,
   },
   "ai-bot-id": { 
     id: "ai-bot-id", username: "AI_Bot", password: "N/A", fullName: "AI Bot Moderator", 
@@ -70,7 +70,7 @@ const userAccounts = {
     about: "I am an AI assistant here to help moderate and keep the chat safe. I only follow commands from server Admins.", 
     role: "admin", 
     joined: "2025-01-01T00:00:00.000Z", messagesCount: 0, roomsCreated: 0,
-    isGloballyMuted: false,
+    isGloballyMuted: false, isAgeVerified: true,
   },
 };
 const onlineUsers = {}; 
@@ -89,6 +89,9 @@ const bannedUserIds = new Set();
 // NEW: State for Reports and Tickets
 const reports = [];
 const supportTickets = [];
+
+// ChatRPG player data per room
+const rpgPlayers = {}; // { roomName: { playerId: characterData } }
 // --- End Server State ---
 
 
@@ -1725,6 +1728,158 @@ app.post("/submit-ticket", (req, res) => {
   }
 });
 
+// --- Age Verification API Routes ---
+
+// In-memory storage for mobile verification sessions
+const verificationSessions = new Map();
+
+// Create a new verification session (for QR code flow)
+app.post("/api/verify-age/session", (req, res) => {
+  try {
+    const { sessionId } = req.body;
+    
+    if (!sessionId) {
+      return res.status(400).json({ error: "Session ID is required" });
+    }
+    
+    // Store session with pending status
+    verificationSessions.set(sessionId, {
+      status: 'pending',
+      verified: null,
+      createdAt: new Date().toISOString(),
+      expiresAt: new Date(Date.now() + 10 * 60 * 1000).toISOString() // 10 min expiry
+    });
+    
+    console.log(`Age verification session created`);
+    
+    res.status(200).json({ success: true, sessionId });
+    
+  } catch (error) {
+    console.error("Error creating verification session:", error);
+    res.status(500).json({ error: "Server error creating session" });
+  }
+});
+
+// Get verification session status (polled by desktop)
+app.get("/api/verify-age/status/:sessionId", (req, res) => {
+  try {
+    const { sessionId } = req.params;
+    
+    const session = verificationSessions.get(sessionId);
+    
+    if (!session) {
+      return res.status(404).json({ error: "Session not found", status: 'not_found' });
+    }
+    
+    // Check if session expired
+    if (new Date() > new Date(session.expiresAt)) {
+      verificationSessions.delete(sessionId);
+      return res.status(410).json({ error: "Session expired", status: 'expired' });
+    }
+    
+    res.status(200).json({
+      status: session.status,
+      verified: session.verified
+    });
+    
+  } catch (error) {
+    console.error("Error getting verification status:", error);
+    res.status(500).json({ error: "Server error" });
+  }
+});
+
+// Update verification session from mobile
+app.post("/api/verify-age/complete/:sessionId", (req, res) => {
+  try {
+    const { sessionId } = req.params;
+    const { verified } = req.body;
+    
+    const session = verificationSessions.get(sessionId);
+    
+    if (!session) {
+      return res.status(404).json({ error: "Session not found" });
+    }
+    
+    // Check if session expired
+    if (new Date() > new Date(session.expiresAt)) {
+      verificationSessions.delete(sessionId);
+      return res.status(410).json({ error: "Session expired" });
+    }
+    
+    // Update session with verification result
+    session.status = 'completed';
+    session.verified = verified;
+    session.completedAt = new Date().toISOString();
+    verificationSessions.set(sessionId, session);
+    
+    console.log(`Mobile age verification completed: ${verified ? 'PASSED' : 'FAILED'}`);
+    
+    res.status(200).json({ 
+      success: true, 
+      verified,
+      message: verified ? "Age verification successful" : "Age verification failed"
+    });
+    
+  } catch (error) {
+    console.error("Error completing verification:", error);
+    res.status(500).json({ error: "Server error" });
+  }
+});
+
+// Mark session as scanning (QR code was scanned on mobile)
+app.post("/api/verify-age/scan/:sessionId", (req, res) => {
+  try {
+    const { sessionId } = req.params;
+    
+    const session = verificationSessions.get(sessionId);
+    
+    if (!session) {
+      return res.status(404).json({ error: "Session not found" });
+    }
+    
+    session.status = 'scanning';
+    verificationSessions.set(sessionId, session);
+    
+    console.log(`QR code scanned for verification session`);
+    
+    res.status(200).json({ success: true, status: 'scanning' });
+    
+  } catch (error) {
+    console.error("Error updating scan status:", error);
+    res.status(500).json({ error: "Server error" });
+  }
+});
+
+// Records age verification status for a user (original endpoint)
+app.post("/api/verify-age", (req, res) => {
+  try {
+    const { userId, verified } = req.body;
+    
+    if (!userId) {
+      return res.status(400).json({ error: "User ID is required" });
+    }
+    
+    // Log age verification (anonymized - no age data logged for privacy)
+    console.log(`Age verification completed for user: ${verified ? 'PASSED' : 'FAILED'}`);
+    
+    // Update user account if exists
+    if (userAccounts[userId]) {
+      userAccounts[userId].isAgeVerified = verified;
+      userAccounts[userId].ageVerifiedAt = new Date().toISOString();
+    }
+    
+    res.status(200).json({ 
+      success: true, 
+      message: verified ? "Age verification successful" : "Age verification failed",
+      verified 
+    });
+    
+  } catch (error) {
+    console.error("Error verifying age:", error);
+    res.status(500).json({ error: "Server error during age verification" });
+  }
+});
+
 // --- Room Engine API Routes ---
 
 // Get room configuration
@@ -1846,7 +2001,7 @@ io.use((socket, next) => {
         id: newId, username: auth.username, password: auth.password, fullName: auth.fullName, 
         email: auth.email, about: "", isGuest: false, role: "user",
         joined: new Date().toISOString(), messagesCount: 0, roomsCreated: 0,
-        isGloballyMuted: false, 
+        isGloballyMuted: false, isAgeVerified: auth.isAgeVerified || false,
       };
       userAccounts[newId] = userAccount;
     } else if (auth.type === 'guest') {
@@ -2953,6 +3108,79 @@ io.on("connection", (socket) => {
     }
   });
 
+  // --- ChatRPG Socket Events ---
+  socket.on("rpg:join", ({ roomName, character }) => {
+    const user = onlineUsers[socket.id];
+    if (!user || !character) return;
+
+    // Initialize room if needed
+    if (!rpgPlayers[roomName]) {
+      rpgPlayers[roomName] = {};
+    }
+
+    // Save character data
+    rpgPlayers[roomName][user.id] = character;
+
+    // Broadcast player list to room
+    const players = Object.values(rpgPlayers[roomName]);
+    io.to(roomName).emit("rpg:players", players);
+
+    console.log(`[RPG] ${user.username} joined game in ${roomName}`);
+  });
+
+  socket.on("rpg:move", ({ roomName, x, y, direction }) => {
+    const user = onlineUsers[socket.id];
+    if (!user || !rpgPlayers[roomName]?.[user.id]) return;
+
+    const userId = user.id;
+    const roomRef = roomName;
+
+    // Update position
+    rpgPlayers[roomName][user.id].x = x;
+    rpgPlayers[roomName][user.id].y = y;
+    rpgPlayers[roomName][user.id].direction = direction;
+    rpgPlayers[roomName][user.id].isMoving = true;
+
+    // Broadcast update to room
+    const players = Object.values(rpgPlayers[roomName]);
+    io.to(roomName).emit("rpg:players", players);
+
+    // Reset moving flag after delay with null safety check
+    setTimeout(() => {
+      if (rpgPlayers[roomRef] && rpgPlayers[roomRef][userId]) {
+        rpgPlayers[roomRef][userId].isMoving = false;
+      }
+    }, 200);
+  });
+
+  socket.on("rpg:action", ({ roomName, action, result }) => {
+    const user = onlineUsers[socket.id];
+    if (!user) return;
+
+    // Broadcast action to other players
+    socket.to(roomName).emit("rpg:action", {
+      playerId: user.id,
+      action,
+      result
+    });
+  });
+
+  socket.on("rpg:leave", ({ roomName }) => {
+    const user = onlineUsers[socket.id];
+    if (!user) return;
+
+    // Remove player from room
+    if (rpgPlayers[roomName]?.[user.id]) {
+      delete rpgPlayers[roomName][user.id];
+
+      // Broadcast updated player list
+      const players = Object.values(rpgPlayers[roomName]);
+      io.to(roomName).emit("rpg:players", players);
+
+      console.log(`[RPG] ${user.username} left game in ${roomName}`);
+    }
+  });
+
   socket.on("disconnect", () => {
     const user = onlineUsers[socket.id];
     if (user) {
@@ -2961,6 +3189,17 @@ io.on("connection", (socket) => {
         userAccounts[user.id].settings = user.settings;
         userAccounts[user.id].hiddenDMs = user.hiddenDMs;
       }
+      
+      // Clean up RPG player data
+      for (const roomName of Object.keys(rpgPlayers)) {
+        if (rpgPlayers[roomName] && rpgPlayers[roomName][user.id]) {
+          delete rpgPlayers[roomName][user.id];
+          // Broadcast updated player list
+          const players = Object.values(rpgPlayers[roomName]);
+          io.to(roomName).emit("rpg:players", players);
+        }
+      }
+      
       leaveMainRoom(socket); // Use leaveMainRoom
       delete onlineUsers[socket.id];
       // Notify admins of status change

@@ -56,14 +56,6 @@ type WorldTile = {
   variant?: number;
 };
 
-type GameMessage = {
-  id: string;
-  text: string;
-  type: 'system' | 'action' | 'chat' | 'loot' | 'levelup';
-  timestamp: number;
-  username?: string;
-};
-
 // --- Enhanced Constants for larger view ---
 const TILE_SIZE = 48; // Larger tiles for better visuals
 const MAP_WIDTH = 40; // Larger map
@@ -1049,45 +1041,133 @@ const StatsBar: React.FC<StatsBarProps> = ({ character }) => {
   );
 };
 
-// Game Log with Runescape styling
-type GameLogProps = {
-  messages: GameMessage[];
+// --- Asset Loader Component (Runescape-style loading screen) ---
+type AssetLoaderProps = {
+  onComplete: () => void;
 };
 
-const GameLog: React.FC<GameLogProps> = ({ messages }) => {
-  const logRef = useRef<HTMLDivElement>(null);
+const AssetLoader: React.FC<AssetLoaderProps> = ({ onComplete }) => {
+  const [progress, setProgress] = useState(0);
+  const [currentAsset, setCurrentAsset] = useState('Initializing...');
+  const [downloadedMB, setDownloadedMB] = useState(0);
+  const totalMB = 12.4;
   
+  const assets = [
+    { name: 'World Map Data', size: 2.1 },
+    { name: 'Character Sprites', size: 1.8 },
+    { name: 'Tile Textures', size: 2.4 },
+    { name: 'Animation Frames', size: 1.5 },
+    { name: 'Sound Effects', size: 0.8 },
+    { name: 'UI Elements', size: 1.2 },
+    { name: 'Skill Icons', size: 0.9 },
+    { name: 'NPC Data', size: 1.7 },
+  ];
+
   useEffect(() => {
-    if (logRef.current) {
-      logRef.current.scrollTop = logRef.current.scrollHeight;
-    }
-  }, [messages]);
-  
-  const getMessageColor = (type: GameMessage['type']): string => {
-    switch(type) {
-      case 'system': return 'text-amber-400';
-      case 'action': return 'text-cyan-300';
-      case 'loot': return 'text-yellow-300';
-      case 'levelup': return 'text-purple-300 font-bold';
-      case 'chat': return 'text-white';
-      default: return 'text-amber-100';
-    }
-  };
+    let isMounted = true;
+    let currentIndex = 0;
+    let downloaded = 0;
+    const timeoutIds: ReturnType<typeof setTimeout>[] = [];
+    
+    const scheduleTimeout = (fn: () => void, delay: number) => {
+      const id = setTimeout(fn, delay);
+      timeoutIds.push(id);
+      return id;
+    };
+    
+    const loadAsset = () => {
+      if (!isMounted) return;
+      
+      if (currentIndex >= assets.length) {
+        setProgress(100);
+        setCurrentAsset('Loading complete!');
+        scheduleTimeout(onComplete, 500);
+        return;
+      }
+      
+      const asset = assets[currentIndex];
+      setCurrentAsset(`Downloading ${asset.name}...`);
+      
+      // Simulate download with random speed variation
+      const chunks = Math.ceil(asset.size * 10);
+      let chunk = 0;
+      
+      const downloadChunk = () => {
+        if (!isMounted) return;
+        
+        if (chunk >= chunks) {
+          currentIndex++;
+          scheduleTimeout(loadAsset, 100);
+          return;
+        }
+        
+        chunk++;
+        downloaded += asset.size / chunks;
+        setDownloadedMB(Math.min(downloaded, totalMB));
+        setProgress(Math.min((downloaded / totalMB) * 100, 99));
+        
+        // Random delay to simulate network variance
+        scheduleTimeout(downloadChunk, 20 + Math.random() * 80);
+      };
+      
+      downloadChunk();
+    };
+    
+    // Start loading after a brief delay
+    scheduleTimeout(loadAsset, 500);
+    
+    return () => {
+      isMounted = false;
+      timeoutIds.forEach(id => clearTimeout(id));
+    };
+  }, [onComplete]);
 
   return (
     <div 
-      ref={logRef}
-      className="h-28 overflow-y-auto bg-black/80 rounded-lg border-2 border-amber-700 p-2 text-xs"
+      className="flex flex-col items-center justify-center h-full bg-black p-8"
       style={{ fontFamily: "'Times New Roman', serif" }}
     >
-      {messages.map(msg => (
-        <div key={msg.id} className={`${getMessageColor(msg.type)} leading-tight`}>
-          {msg.username && msg.type === 'chat' && (
-            <span className="text-cyan-400 font-bold">{msg.username}: </span>
-          )}
-          {msg.text}
+      {/* Runescape-style logo */}
+      <div className="text-center mb-8">
+        <h1 className="text-4xl font-bold text-amber-500 mb-2" style={{ textShadow: '2px 2px 4px #000' }}>
+          ⚔️ ChatRPG ⚔️
+        </h1>
+        <p className="text-amber-300/80">The Chat Network RPG Experience</p>
+      </div>
+      
+      {/* Loading bar container - Runescape style */}
+      <div className="w-80 mb-4">
+        <div className="bg-neutral-900 border-4 border-amber-700 rounded p-2" style={{ boxShadow: 'inset 0 0 10px rgba(0,0,0,0.8)' }}>
+          <div className="h-6 bg-black rounded overflow-hidden border border-amber-900">
+            <div 
+              className="h-full bg-gradient-to-r from-red-700 via-red-500 to-red-600 transition-all duration-100"
+              style={{ width: `${progress}%` }}
+            />
+          </div>
         </div>
-      ))}
+      </div>
+      
+      {/* Progress text */}
+      <div className="text-center text-amber-200 mb-2">
+        <p className="text-sm">{currentAsset}</p>
+        <p className="text-xs text-amber-400/70 mt-1">
+          {downloadedMB.toFixed(1)} MB / {totalMB} MB ({Math.floor(progress)}%)
+        </p>
+      </div>
+      
+      {/* Tips */}
+      <div className="mt-8 text-center max-w-md">
+        <p className="text-amber-500/60 text-xs italic">
+          Tip: Use WASD or arrow keys to move. Press SPACE near resources to gather them!
+        </p>
+      </div>
+      
+      {/* Runescape-style decorative elements */}
+      <div className="absolute bottom-4 left-0 right-0 text-center">
+        <p className="text-amber-700/50 text-xs">
+          ChatRPG Engine v2.0 • A Chat Network with an Adventure
+        </p>
+      </div>
     </div>
   );
 };
@@ -1105,6 +1185,8 @@ type ChatRPGProps = {
   isAdmin?: boolean;
   onGameStateChange?: (isExpanded: boolean) => void;
   chatMessages?: Array<{ user: string; text: string }>;
+  // NEW: Callback to send game events to main chat
+  onGameEvent?: (event: { type: 'private' | 'public'; message: string }) => void;
 };
 
 const ChatRPG: React.FC<ChatRPGProps> = ({
@@ -1119,16 +1201,13 @@ const ChatRPG: React.FC<ChatRPGProps> = ({
   isAdmin = false,
   onGameStateChange,
   chatMessages = [],
+  onGameEvent,
 }) => {
-  const [gameState, setGameState] = useState<'loading' | 'create' | 'playing'>('loading');
+  const [gameState, setGameState] = useState<'assets' | 'loading' | 'create' | 'playing'>('assets');
   const [world] = useState<WorldTile[][]>(() => generateWorld());
   const [character, setCharacter] = useState<Character | null>(null);
   const [otherPlayers, setOtherPlayers] = useState<Character[]>([]);
-  const [messages, setMessages] = useState<GameMessage[]>([
-    { id: '1', text: '⚔️ Welcome to ChatRPG! Use WASD or Arrow keys to move.', type: 'system', timestamp: Date.now() },
-    { id: '2', text: '🎮 Walk near resources and press SPACE or click to gather.', type: 'system', timestamp: Date.now() },
-    { id: '3', text: '💬 Your chat messages appear above your character!', type: 'system', timestamp: Date.now() },
-  ]);
+  // Removed internal messages state - now routing to main chat
   const [cameraX, setCameraX] = useState(10);
   const [cameraY, setCameraY] = useState(10);
   const [isExpanded, setIsExpanded] = useState(false);
@@ -1155,9 +1234,9 @@ const ChatRPG: React.FC<ChatRPGProps> = ({
     }
   }, [chatMessages, username, character, socket, roomName]);
 
-  // Initialize or load character
+  // Check for saved character after asset loading completes
   useEffect(() => {
-    if (!isOpen) return;
+    if (!isOpen || gameState !== 'loading') return;
     
     const savedChar = localStorage.getItem(`chatrpg_${userId}`);
     if (savedChar) {
@@ -1174,7 +1253,7 @@ const ChatRPG: React.FC<ChatRPGProps> = ({
     } else {
       setGameState('create');
     }
-  }, [isOpen, userId, isAdmin]);
+  }, [isOpen, userId, isAdmin, gameState]);
 
   // Save character on changes
   useEffect(() => {
@@ -1192,9 +1271,7 @@ const ChatRPG: React.FC<ChatRPGProps> = ({
     };
 
     const handlePlayerAction = (data: { playerId: string; action: string; result: string }) => {
-      if (data.playerId !== userId) {
-        addMessage(data.result, 'action');
-      }
+      // Other player actions are shown via chat bubbles, no internal log needed
     };
 
     const handlePlayerChat = (data: { playerId: string; username: string; text: string }) => {
@@ -1204,7 +1281,7 @@ const ChatRPG: React.FC<ChatRPGProps> = ({
             ? { ...p, chatBubble: { text: data.text, timestamp: Date.now() } }
             : p
         ));
-        addMessage(`${data.username}: ${data.text}`, 'chat', data.username);
+        // Chat messages now go through main chat, no internal log needed
       }
     };
 
@@ -1222,15 +1299,12 @@ const ChatRPG: React.FC<ChatRPGProps> = ({
     };
   }, [socket, character, roomName, userId, gameState]);
 
-  const addMessage = useCallback((text: string, type: GameMessage['type'] = 'system', msgUsername?: string) => {
-    setMessages(prev => [...prev.slice(-50), {
-      id: `${Date.now()}_${Math.random()}`,
-      text,
-      type,
-      timestamp: Date.now(),
-      username: msgUsername,
-    }]);
-  }, []);
+  // Helper function to send game events to main chat
+  const sendGameEvent = useCallback((type: 'private' | 'public', message: string) => {
+    if (onGameEvent) {
+      onGameEvent({ type, message });
+    }
+  }, [onGameEvent]);
 
   const handleCharacterCreate = (appearance: CharacterAppearance) => {
     const newChar: Character = {
@@ -1259,7 +1333,8 @@ const ChatRPG: React.FC<ChatRPGProps> = ({
     setCameraX(newChar.x - VIEW_WIDTH / 2);
     setCameraY(newChar.y - VIEW_HEIGHT / 2);
     setGameState('playing');
-    addMessage(`⚔️ ${username} has entered the realm!`, 'system');
+    // Send public announcement that user entered the realm
+    sendGameEvent('public', `⚔️ ${username} has entered the ChatRPG realm!`);
   };
 
   const moveCharacter = useCallback((dx: number, dy: number) => {
@@ -1329,7 +1404,8 @@ const ChatRPG: React.FC<ChatRPGProps> = ({
       
       if (shouldLevelUp) {
         newStats[skillKey] += 1;
-        addMessage(`🎉 ${skillKey.charAt(0).toUpperCase() + skillKey.slice(1)} leveled up to ${newStats[skillKey]}!`, 'levelup');
+        // Skill level up - PUBLIC announcement
+        sendGameEvent('public', `🎉 ${username}'s ${skillKey.charAt(0).toUpperCase() + skillKey.slice(1)} leveled up to ${newStats[skillKey]}!`);
       }
       
       const newXp = character.xp + xpGain;
@@ -1344,10 +1420,12 @@ const ChatRPG: React.FC<ChatRPGProps> = ({
         gold: character.gold + goldGain,
       });
       
-      addMessage(`${actionText} (+${xpGain} XP, +${goldGain} gold)`, 'loot');
+      // XP and gold - PRIVATE (only shown to user, not broadcast)
+      sendGameEvent('private', `${actionText} (+${xpGain} XP, +${goldGain} gold)`);
       
       if (leveledUp) {
-        addMessage(`🌟 LEVEL UP! You are now level ${newLevel}!`, 'levelup');
+        // Overall level up - PUBLIC announcement
+        sendGameEvent('public', `🌟 ${username} reached Level ${newLevel}!`);
       }
       
       if (socket) {
@@ -1499,6 +1577,10 @@ const ChatRPG: React.FC<ChatRPGProps> = ({
       {/* Content */}
       {!isMinimized && (
         <div className="p-3 flex-1">
+          {gameState === 'assets' && (
+            <AssetLoader onComplete={() => setGameState('loading')} />
+          )}
+
           {gameState === 'loading' && (
             <div className="flex items-center justify-center h-40">
               <div className="text-amber-300 text-xl animate-pulse" style={{ textShadow: '2px 2px 4px #000' }}>
@@ -1513,7 +1595,7 @@ const ChatRPG: React.FC<ChatRPGProps> = ({
 
           {gameState === 'playing' && character && (
             <div className={`flex gap-3 ${isExpanded ? 'flex-row' : 'flex-col'}`}>
-              {/* Game area */}
+              {/* Game area - removed GameLog, now events go to main chat */}
               <div className="flex flex-col gap-2 flex-1">
                 <GameCanvas
                   world={world}
@@ -1523,7 +1605,6 @@ const ChatRPG: React.FC<ChatRPGProps> = ({
                   cameraY={cameraY}
                   onTileClick={handleTileClick}
                 />
-                <GameLog messages={messages} />
               </div>
               
               {/* Stats sidebar */}

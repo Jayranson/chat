@@ -1677,6 +1677,25 @@ function ChatApp({ socket, initialUser, initialRoom, onExit, onViewProfile, onWh
   const handleSummonUser = (user: User) => socket.emit("admin summon", { targetUserId: user.id });
   const handleReleaseUser = () => { if (currentRoom.type === 'judgement' && currentRoom.summonedUser) socket.emit("admin release", { targetUserId: currentRoom.summonedUser }); };
 
+  // NEW: Handler for ChatRPG game events - routes XP/gold to user only, level-ups to everyone
+  const handleGameEvent = (event: { type: 'private' | 'public'; message: string }) => {
+    if (event.type === 'private') {
+      // Private events (XP, gold gains) - only show to this user locally
+      const privateMsg: Message = {
+        id: `game-${Date.now()}-${Math.random().toString(36).substring(2, 11)}`,
+        user: 'ChatRPG',
+        text: event.message,
+        time: new Date().toLocaleTimeString(),
+        type: 'system',
+        room: currentRoom.name,
+      };
+      setMessages((prev) => [...prev, privateMsg]);
+    } else {
+      // Public events (level-ups) - broadcast to everyone via socket
+      socket.emit("chat message", { text: event.message });
+    }
+  };
+
   const getRoomDisplayName = (room: Room) => {
     if (room.type === 'public') return `# ${room.name}`;
     if (room.type === 'judgement') return `⚖️ ${room.name}`;
@@ -1983,6 +2002,7 @@ function ChatApp({ socket, initialUser, initialRoom, onExit, onViewProfile, onWh
               isAdmin={currentUser.role === 'admin'}
               onGameStateChange={(expanded) => setGameExpanded(expanded)}
               chatMessages={messages.filter(m => m.type === 'user').slice(-10).map(m => ({ user: m.user, text: m.text }))}
+              onGameEvent={handleGameEvent}
             />
           </div>
         )}

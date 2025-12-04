@@ -1,5 +1,7 @@
 import React, { useEffect, useState, useRef, type ChangeEvent } from "react";
 import { io, Socket } from "socket.io-client";
+import AgeVerification from "./AgeVerification";
+import ChatRPGPhaser from "./ChatRPGPhaser";
 
 // --- Server Configuration ---
 // Automatically detect server URL based on environment
@@ -1402,7 +1404,10 @@ const LobbyPage = ({
                         isUnread ? 'bg-green-600 hover:bg-green-700' : 'bg-neutral-800 border border-neutral-700 hover:bg-neutral-700/50'
                       }`}
                     >
-                      <span className="text-lg font-medium">💬 {getDMDisplayName(room)}</span>
+                      <span className={`text-lg font-medium ${isUnread ? 'animate-pulse' : ''}`}>
+                        💬 {getDMDisplayName(room)}
+                        {isUnread && <span className="ml-2 inline-block w-3 h-3 bg-white rounded-full animate-ping"></span>}
+                      </span>
                       <span onClick={(e) => handleHideDM(e, room.name)} className="text-neutral-500 hover:text-white opacity-0 group-hover:opacity-100 p-1 rounded-full">
                         <IconX />
                       </span>
@@ -1495,6 +1500,11 @@ function ChatApp({ socket, initialUser, initialRoom, onExit, onViewProfile, onWh
   const [loadingRecap, setLoadingRecap] = useState(false);
 
   const [unreadCountsByUser, setUnreadCountsByUser] = useState<Record<string, number>>({});
+
+  // NEW: State for ChatRPG game
+  const [showGame, setShowGame] = useState(false);
+  const [gameMinimized, setGameMinimized] = useState(false);
+  const [gameExpanded, setGameExpanded] = useState(false);
 
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const typingTimeout = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -1667,6 +1677,25 @@ function ChatApp({ socket, initialUser, initialRoom, onExit, onViewProfile, onWh
   const handleSummonUser = (user: User) => socket.emit("admin summon", { targetUserId: user.id });
   const handleReleaseUser = () => { if (currentRoom.type === 'judgement' && currentRoom.summonedUser) socket.emit("admin release", { targetUserId: currentRoom.summonedUser }); };
 
+  // NEW: Handler for ChatRPG game events - routes XP/gold to user only, level-ups to everyone
+  const handleGameEvent = (event: { type: 'private' | 'public'; message: string }) => {
+    if (event.type === 'private') {
+      // Private events (XP, gold gains) - only show to this user locally
+      const privateMsg: Message = {
+        id: `game-${Date.now()}-${Math.random().toString(36).substring(2, 11)}`,
+        user: 'ChatRPG',
+        text: event.message,
+        time: new Date().toLocaleTimeString(),
+        type: 'system',
+        room: currentRoom.name,
+      };
+      setMessages((prev) => [...prev, privateMsg]);
+    } else {
+      // Public events (level-ups) - broadcast to everyone via socket
+      socket.emit("chat message", { text: event.message });
+    }
+  };
+
   const getRoomDisplayName = (room: Room) => {
     if (room.type === 'public') return `# ${room.name}`;
     if (room.type === 'judgement') return `⚖️ ${room.name}`;
@@ -1756,14 +1785,59 @@ function ChatApp({ socket, initialUser, initialRoom, onExit, onViewProfile, onWh
       />
      
       <div className="flex flex-col md:flex-row flex-1 min-h-0">
-        {/* User List Panel */}
-        <div className={`bg-neutral-800 border-r border-neutral-700 ${isSummoned ? 'opacity-50 pointer-events-none' : ''} w-full md:w-64 p-4 flex flex-col overflow-y-auto`}>
-          <h2 className="text-xl font-semibold mb-3">Users <span className="text-sm font-normal text-neutral-400">({users.length})</span></h2>
-          <ul className="space-y-1">
+        {/* User List Panel - compact mode when game is expanded */}
+        <div className={`bg-neutral-800 border-r border-neutral-700 ${isSummoned ? 'opacity-50 pointer-events-none' : ''} ${gameExpanded ? 'w-16 p-2' : 'w-full md:w-64 p-4'} flex flex-col overflow-y-auto transition-all duration-300`}>
+          {!gameExpanded && <h2 className="text-xl font-semibold mb-3">Users <span className="text-sm font-normal text-neutral-400">({users.length})</span></h2>}
+          {gameExpanded && <h2 className="text-xs font-semibold mb-2 text-center text-neutral-400">{users.length}</h2>}
+          <ul className={`${gameExpanded ? 'space-y-2' : 'space-y-1'}`}>
             {users.map((user) => {
               const hasUnread = !!unreadCountsByUser[user.id];
+              
+              // Compact avatar-only view when game is expanded
+              if (gameExpanded) {
+                const initial = user.name.charAt(0).toUpperCase();
+                return (
+                  <li 
+                    key={user.id} 
+                    className={`relative flex justify-center ${hasUnread ? 'animate-pulse' : ''}`}
+                    onContextMenu={(e) => handleUserContextMenu(e, user)}
+                    title={user.name}
+                  >
+                    <div className={`w-10 h-10 rounded-full flex items-center justify-center text-sm font-bold ${
+                      user.role === 'admin' ? 'bg-blue-600' : 
+                      user.role === 'owner' ? 'bg-yellow-600' : 
+                      user.role === 'host' ? 'bg-gray-500' : 'bg-neutral-600'
+                    } ${hasUnread ? 'ring-2 ring-green-500' : ''}`}>
+                      {user.role === 'admin' && <span className="text-xs">👑</span>}
+                      {user.role !== 'admin' && initial}
+                    </div>
+                    <div className="absolute bottom-0 right-0">
+                      <StatusIndicator status={user.status} />
+                    </div>
+                    {hasUnread && (
+                      <span className="absolute top-0 right-0 w-2 h-2 bg-green-500 rounded-full animate-ping"></span>
+                    )}
+                  </li>
+                );
+              }
+              
+              // Normal view
+              const userListItemClasses = [
+                'group flex items-center justify-between gap-2 p-2 rounded-md',
+                !isSummoned ? 'cursor-pointer hover:bg-neutral-700/50' : '',
+                user.isSummoned ? 'opacity-50 text-neutral-500' : '',
+                user.isSpectating ? 'opacity-60' : '',
+                hasUnread ? 'bg-green-900/30 border border-green-500/50' : ''
+              ].filter(Boolean).join(' ');
+              
+              const userNameClasses = [
+                'truncate',
+                user.isSpectating ? 'line-through' : '',
+                hasUnread ? 'text-green-400 font-bold animate-pulse' : ''
+              ].filter(Boolean).join(' ');
+              
               return (
-                <li key={user.id} className={`group flex items-center justify-between gap-2 p-2 rounded-md ${!isSummoned ? 'cursor-pointer hover:bg-neutral-700/50' : ''} ${user.isSummoned ? 'opacity-50 text-neutral-500' : ''} ${user.isSpectating ? 'opacity-60' : ''}`}
+                <li key={user.id} className={userListItemClasses}
                   onContextMenu={(e) => handleUserContextMenu(e, user)}
                 >
                   <div className="flex items-center gap-2 overflow-hidden">
@@ -1772,11 +1846,11 @@ function ChatApp({ socket, initialUser, initialRoom, onExit, onViewProfile, onWh
                     </div>
 
                     {hasUnread && (
-                      <span className="w-2.5 h-2.5 bg-green-500 rounded-full animate-pulse flex-shrink-0" title="Unread Whisper"></span>
+                      <span className="w-2.5 h-2.5 bg-green-500 rounded-full animate-ping flex-shrink-0" title="Unread Whisper"></span>
                     )}
 
                     <UserBadge role={user.role} username={user.name} />
-                    <span className={`truncate ${user.isSpectating ? 'line-through' : ''}`}>{user.name}</span>
+                    <span className={userNameClasses}>{user.name}</span>
                     {user.id === currentUser?.id && (<span className="text-xs text-blue-400">(You)</span>)}
                   </div>
                   {user.typing && (<span className="text-sm italic text-neutral-400 flex-shrink-0">typing...</span>)}
@@ -1802,6 +1876,15 @@ function ChatApp({ socket, initialUser, initialRoom, onExit, onViewProfile, onWh
                   </span>
                 )}
               </div>
+
+              {/* Game Toggle Button */}
+              <button
+                onClick={() => setShowGame(!showGame)}
+                className={`px-3 py-1 rounded-md text-white transition-colors ${showGame ? 'bg-purple-600 hover:bg-purple-700' : 'bg-neutral-700 hover:bg-neutral-600'}`}
+                title="Toggle ChatRPG Game"
+              >
+                🎮 Game
+              </button>
 
               <h2 className="text-2xl font-bold flex items-center gap-2">{isRoomLocked && <span title="Room is Locked">🔒</span>}{currentChatName}</h2>
             </div>
@@ -1903,6 +1986,21 @@ function ChatApp({ socket, initialUser, initialRoom, onExit, onViewProfile, onWh
             </div>
           </div>
         </div>
+
+        {/* ChatRPG Game Panel - positioned to the right of chat */}
+        {showGame && (
+          <div className={`flex-shrink-0 transition-all duration-300 ${gameExpanded ? 'w-[800px]' : 'w-[600px]'}`} style={{ height: '100%' }}>
+            <ChatRPGPhaser
+              socket={socket}
+              username={currentUser.username}
+              currentRoom={currentRoom.name}
+              onGameEvent={handleGameEvent}
+              isExpanded={gameExpanded}
+              onToggleExpand={() => setGameExpanded(!gameExpanded)}
+              isAdmin={currentUser.role === 'admin'}
+            />
+          </div>
+        )}
       </div>
     </div>
   );
@@ -3041,7 +3139,11 @@ const AdminPanelPage = ({ socket, currentUser, onBackToLobby, onViewProfile, onJ
 const getDmRoomName = (id1: string, id2: string) => [id1, id2].sort().join('__DM__');
 
 export default function App() {
-  const [page, setPage] = useState<'landing' | 'auth' | 'changelog' | 'lobby' | 'chat' | 'admin' | 'onboarding'>('landing');
+  const [page, setPage] = useState<'landing' | 'auth' | 'changelog' | 'lobby' | 'chat' | 'admin' | 'onboarding' | 'age-verification'>('landing');
+  const [isAgeVerified, setIsAgeVerified] = useState<boolean>(() => {
+    // Check localStorage for previous verification
+    return localStorage.getItem('ageVerified') === 'true';
+  });
   const [socket, setSocket] = useState<Socket | null>(null);
   const [currentUser, setCurrentUser] = useState<UserAccount | null>(null);
   const [currentRoom, setCurrentRoom] = useState<Room | null>(null);
@@ -3293,12 +3395,37 @@ export default function App() {
           <EmojiOnboarding
             onComplete={(roomName) => {
               setSuggestedRoom(roomName);
-              setPage('auth');
+              // Go to age verification if not already verified
+              if (!isAgeVerified) {
+                setPage('age-verification');
+              } else {
+                setPage('auth');
+              }
             }}
             onSkip={() => {
               setSuggestedRoom('general');
+              // Go to age verification if not already verified
+              if (!isAgeVerified) {
+                setPage('age-verification');
+              } else {
+                setPage('auth');
+              }
+            }}
+          />
+        )}
+        {page === 'age-verification' && (
+          <AgeVerification
+            onVerified={() => {
+              setIsAgeVerified(true);
+              localStorage.setItem('ageVerified', 'true');
               setPage('auth');
             }}
+            onSkip={() => {
+              // Allow skip but with limited access warning
+              // In production, you might not allow skip at all
+              setPage('auth');
+            }}
+            minAge={18}
           />
         )}
         {page === 'changelog' && (

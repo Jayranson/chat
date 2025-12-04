@@ -1,7 +1,7 @@
 import React, { useEffect, useState, useRef, type ChangeEvent } from "react";
 import { io, Socket } from "socket.io-client";
 import AgeVerification from "./AgeVerification";
-import ChatRPG from "./ChatRPG";
+import ChatRPGPhaser from "./ChatRPGPhaser";
 
 // --- Server Configuration ---
 // Automatically detect server URL based on environment
@@ -1989,20 +1989,15 @@ function ChatApp({ socket, initialUser, initialRoom, onExit, onViewProfile, onWh
 
         {/* ChatRPG Game Panel - positioned to the right of chat */}
         {showGame && (
-          <div className={`flex-shrink-0 transition-all duration-300 ${gameExpanded ? 'absolute right-0 top-0 bottom-0 z-40' : ''}`}>
-            <ChatRPG
+          <div className={`flex-shrink-0 transition-all duration-300 ${gameExpanded ? 'w-[800px]' : 'w-[600px]'}`} style={{ height: '100%' }}>
+            <ChatRPGPhaser
               socket={socket}
               username={currentUser.username}
-              userId={currentUser.id}
-              roomName={currentRoom.name}
-              isOpen={showGame}
-              onClose={() => setShowGame(false)}
-              onToggleSize={() => setGameMinimized(!gameMinimized)}
-              isMinimized={gameMinimized}
-              isAdmin={currentUser.role === 'admin'}
-              onGameStateChange={(expanded) => setGameExpanded(expanded)}
-              chatMessages={messages.filter(m => m.type === 'user').slice(-10).map(m => ({ user: m.user, text: m.text }))}
+              currentRoom={currentRoom.name}
               onGameEvent={handleGameEvent}
+              isExpanded={gameExpanded}
+              onToggleExpand={() => setGameExpanded(!gameExpanded)}
+              isAdmin={currentUser.role === 'admin'}
             />
           </div>
         )}
